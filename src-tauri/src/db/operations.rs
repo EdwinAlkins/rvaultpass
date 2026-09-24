@@ -53,6 +53,8 @@ pub fn create_entry(
     title: String,
     url: Option<String>,
     username: Option<String>,
+    username2: Option<String>,
+    username3: Option<String>,
     password: String,
     notes: Option<String>,
     totp_secret: Option<String>,
@@ -66,14 +68,16 @@ pub fn create_entry(
     let folder_id_bytes = folder_id.as_ref().map(|f| parse_uuid(f)).transpose()?;
 
     conn.execute(
-        "INSERT INTO entries (id, folder_id, title, url, username, password, notes, totp_secret, created_at, updated_at, is_favorite)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO entries (id, folder_id, title, url, username, username2, username3, password, notes, totp_secret, created_at, updated_at, is_favorite)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             id,
             folder_id_bytes,
             title,
             url,
             username,
+            username2,
+            username3,
             password,
             notes,
             totp_secret,
@@ -84,7 +88,7 @@ pub fn create_entry(
     ).map_err(|e| format!("Failed to create entry: {}", e))?;
 
     // Update FTS index
-    update_fts_index(&conn, &id, &title, &url, &username, &notes)?;
+    update_fts_index(&conn, &id, &title, &url, &username, &username2, &username3, &notes)?;
 
     // Associate tags if provided
     if let Some(tags) = tag_ids {
@@ -106,30 +110,13 @@ pub fn create_entry(
 pub fn get_all_entries() -> Result<Vec<VaultEntry>, String> {
     let conn = get_connection()?;
     let mut stmt = conn.prepare(
-        "SELECT id, folder_id, title, url, username, password, notes, totp_secret,
+        "SELECT id, folder_id, title, url, username, username2, username3, password, notes, totp_secret,
                 created_at, updated_at, is_favorite
          FROM entries ORDER BY title"
     ).map_err(|e| format!("Failed to prepare statement: {}", e))?;
 
-    let rows = stmt.query_map([], |row| {
-        let id_bytes: Vec<u8> = row.get(0)?;
-        let folder_id_bytes: Option<Vec<u8>> = row.get(1)?;
-
-        Ok(VaultEntry {
-            id: uuid_to_string(&id_bytes),
-            folder_id: folder_id_bytes.as_deref().map(uuid_to_string),
-            title: row.get(2)?,
-            url: row.get(3)?,
-            username: row.get(4)?,
-            password: row.get(5)?,
-            notes: row.get(6)?,
-            totp_secret: row.get(7)?,
-            created_at: chrono::DateTime::from_timestamp(row.get(8)?, 0).unwrap_or_default(),
-            updated_at: chrono::DateTime::from_timestamp(row.get(9)?, 0).unwrap_or_default(),
-            is_favorite: row.get::<_, i32>(10)? != 0,
-            tags: Vec::new(), // Will be populated separately
-        })
-    }).map_err(|e| format!("Failed to query entries: {}", e))?;
+    let rows = stmt.query_map([], |row| Ok(map_entry_row(row)?))
+        .map_err(|e| format!("Failed to query entries: {}", e))?;
 
     let mut entries: Vec<VaultEntry> = rows.collect::<Result<_, _>>()
         .map_err(|e| format!("Failed to collect entries: {}", e))?;
@@ -142,35 +129,42 @@ pub fn get_all_entries() -> Result<Vec<VaultEntry>, String> {
     Ok(entries)
 }
 
+/// Map a SELECT row (id … is_favorite) to VaultEntry
+fn map_entry_row(row: &rusqlite::Row<'_>) -> Result<VaultEntry, rusqlite::Error> {
+    let id_bytes: Vec<u8> = row.get(0)?;
+    let folder_id_bytes: Option<Vec<u8>> = row.get(1)?;
+
+    Ok(VaultEntry {
+        id: uuid_to_string(&id_bytes),
+        folder_id: folder_id_bytes.as_deref().map(uuid_to_string),
+        title: row.get(2)?,
+        url: row.get(3)?,
+        username: row.get(4)?,
+        username2: row.get(5)?,
+        username3: row.get(6)?,
+        password: row.get(7)?,
+        notes: row.get(8)?,
+        totp_secret: row.get(9)?,
+        created_at: chrono::DateTime::from_timestamp(row.get(10)?, 0).unwrap_or_default(),
+        updated_at: chrono::DateTime::from_timestamp(row.get(11)?, 0).unwrap_or_default(),
+        is_favorite: row.get::<_, i32>(12)? != 0,
+        tags: Vec::new(),
+    })
+}
+
 /// Get a single entry by ID
 pub fn get_entry_by_id(conn: &Connection, id: &str) -> Result<VaultEntry, String> {
     let id_bytes = parse_uuid(id)?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, folder_id, title, url, username, password, notes, totp_secret,
+        "SELECT id, folder_id, title, url, username, username2, username3, password, notes, totp_secret,
                 created_at, updated_at, is_favorite
          FROM entries WHERE id = ?1"
     ).map_err(|e| format!("Failed to prepare statement: {}", e))?;
 
-    let entry = stmt.query_row(params![id_bytes], |row| {
-        let id_bytes: Vec<u8> = row.get(0)?;
-        let folder_id_bytes: Option<Vec<u8>> = row.get(1)?;
-
-        Ok(VaultEntry {
-            id: uuid_to_string(&id_bytes),
-            folder_id: folder_id_bytes.as_deref().map(uuid_to_string),
-            title: row.get(2)?,
-            url: row.get(3)?,
-            username: row.get(4)?,
-            password: row.get(5)?,
-            notes: row.get(6)?,
-            totp_secret: row.get(7)?,
-            created_at: chrono::DateTime::from_timestamp(row.get(8)?, 0).unwrap_or_default(),
-            updated_at: chrono::DateTime::from_timestamp(row.get(9)?, 0).unwrap_or_default(),
-            is_favorite: row.get::<_, i32>(10)? != 0,
-            tags: Vec::new(),
-        })
-    }).map_err(|e| format!("Entry not found: {}", e))?;
+    let entry = stmt
+        .query_row(params![id_bytes], |row| Ok(map_entry_row(row)?))
+        .map_err(|e| format!("Entry not found: {}", e))?;
 
     Ok(entry)
 }
@@ -190,6 +184,8 @@ pub fn update_entry(
     title: String,
     url: Option<String>,
     username: Option<String>,
+    username2: Option<String>,
+    username3: Option<String>,
     password: Option<String>,
     notes: Option<String>,
     totp_secret: Option<String>,
@@ -203,12 +199,16 @@ pub fn update_entry(
     let folder_id_bytes = folder_id.as_ref().map(|f| parse_uuid(f)).transpose()?;
 
     conn.execute(
-        "UPDATE entries SET folder_id = ?1, title = ?2, url = ?3, username = ?4, password = COALESCE(?5, password), notes = ?6, totp_secret = ?7, is_favorite = COALESCE(?8, is_favorite), updated_at = ?9 WHERE id = ?10",
+        "UPDATE entries SET folder_id = ?1, title = ?2, url = ?3, username = ?4, username2 = ?5, username3 = ?6,
+         password = COALESCE(?7, password), notes = ?8, totp_secret = ?9, is_favorite = COALESCE(?10, is_favorite),
+         updated_at = ?11 WHERE id = ?12",
         params![
             folder_id_bytes,
             title,
             url,
             username,
+            username2,
+            username3,
             password,
             notes,
             totp_secret,
@@ -220,7 +220,7 @@ pub fn update_entry(
 
     // Update FTS index
     let title_val = title.clone();
-    update_fts_index(&conn, &id_bytes, &title_val, &url, &username, &notes)?;
+    update_fts_index(&conn, &id_bytes, &title_val, &url, &username, &username2, &username3, &notes)?;
 
     // Update tags if provided
     if let Some(tags) = tag_ids {
@@ -435,7 +435,7 @@ pub fn search_entries(query: &str) -> Result<Vec<VaultEntry>, String> {
 
     // Use FTS5 match query
     let mut stmt = conn.prepare(
-        "SELECT e.id, e.folder_id, e.title, e.url, e.username, e.password, e.notes, e.totp_secret,
+        "SELECT e.id, e.folder_id, e.title, e.url, e.username, e.username2, e.username3, e.password, e.notes, e.totp_secret,
                 e.created_at, e.updated_at, e.is_favorite
          FROM entries e
          INNER JOIN entries_fts fts ON e.rowid = fts.rowid
@@ -446,25 +446,9 @@ pub fn search_entries(query: &str) -> Result<Vec<VaultEntry>, String> {
     // Sanitize query for FTS5 (wrap phrases)
     let fts_query = format!("\"{}\"*", query.replace('"', ""));
 
-    let rows = stmt.query_map(params![fts_query], |row| {
-        let id_bytes: Vec<u8> = row.get(0)?;
-        let folder_id_bytes: Option<Vec<u8>> = row.get(1)?;
-
-        Ok(VaultEntry {
-            id: uuid_to_string(&id_bytes),
-            folder_id: folder_id_bytes.as_deref().map(uuid_to_string),
-            title: row.get(2)?,
-            url: row.get(3)?,
-            username: row.get(4)?,
-            password: row.get(5)?,
-            notes: row.get(6)?,
-            totp_secret: row.get(7)?,
-            created_at: chrono::DateTime::from_timestamp(row.get(8)?, 0).unwrap_or_default(),
-            updated_at: chrono::DateTime::from_timestamp(row.get(9)?, 0).unwrap_or_default(),
-            is_favorite: row.get::<_, i32>(10)? != 0,
-            tags: Vec::new(),
-        })
-    }).map_err(|e| format!("Failed to query entries: {}", e))?;
+    let rows = stmt
+        .query_map(params![fts_query], |row| Ok(map_entry_row(row)?))
+        .map_err(|e| format!("Failed to query entries: {}", e))?;
 
     let entries: Vec<VaultEntry> = rows.collect::<Result<_, _>>()
         .map_err(|e| format!("Failed to collect entries: {}", e))?;
@@ -479,11 +463,20 @@ fn update_fts_index(
     title: &str,
     url: &Option<String>,
     username: &Option<String>,
+    username2: &Option<String>,
+    username3: &Option<String>,
     notes: &Option<String>,
 ) -> Result<(), String> {
     let url_val = url.as_deref().unwrap_or("");
-    let username_val = username.as_deref().unwrap_or("");
     let notes_val = notes.as_deref().unwrap_or("");
+
+    // Concatenate login fields so username2/3 remain searchable without altering FTS schema
+    let username_val = [username, username2, username3]
+        .iter()
+        .filter_map(|v| v.as_deref())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
 
     // Delete existing FTS entry
     conn.execute(
@@ -506,12 +499,19 @@ fn update_fts_index(
 // ============================================================================
 
 /// Generate a random password
-pub fn generate_password(params: &PasswordGenerationParams) -> String {
-    use ring::rand::{SecureRandom, SystemRandom};
+pub fn generate_password(params: &PasswordGenerationParams) -> Result<String, String> {
+    use ring::rand::SystemRandom;
+
+    const MIN_LEN: usize = 4;
+    const MAX_LEN: usize = 1024;
+    if !(MIN_LEN..=MAX_LEN).contains(&params.length) {
+        return Err(format!(
+            "Password length must be between {} and {}",
+            MIN_LEN, MAX_LEN
+        ));
+    }
 
     let rng = SystemRandom::new();
-    let mut bytes = vec![0u8; params.length * 4];
-    rng.fill(&mut bytes).unwrap();
 
     let mut charset = String::new();
     if params.use_uppercase {
@@ -531,82 +531,79 @@ pub fn generate_password(params: &PasswordGenerationParams) -> String {
         charset.push_str("abcdefghijklmnopqrstuvwxyz0123456789");
     }
 
-    // Remove ambiguous characters if requested
     if params.exclude_ambiguous {
-        for c in &['l', '1', 'I', 'O', '0', 'o'] {
-            charset = charset.replace(*c, "");
+        for c in ['l', '1', 'I', 'O', '0', 'o'] {
+            charset = charset.replace(c, "");
         }
     }
 
     let charset: Vec<char> = charset.chars().collect();
-    let mut password = String::with_capacity(params.length);
-
-    let mut byte_idx = 0;
-    while password.len() < params.length {
-        if byte_idx + 4 > bytes.len() {
-            // Regenerate if we run out of bytes
-            ring::rand::SystemRandom::new().fill(&mut bytes).unwrap();
-            byte_idx = 0;
-        }
-        let val = u32::from_le_bytes([
-            bytes[byte_idx],
-            bytes[byte_idx + 1],
-            bytes[byte_idx + 2],
-            bytes[byte_idx + 3],
-        ]) as usize;
-        password.push(charset[val % charset.len()]);
-        byte_idx += 4;
+    if charset.is_empty() {
+        return Err("Character set is empty after applying options".to_string());
     }
 
-    password
+    let bound = charset.len() as u32;
+    let mut password = String::with_capacity(params.length);
+    for _ in 0..params.length {
+        let idx = random_index(&rng, bound)?;
+        password.push(charset[idx as usize]);
+    }
+
+    Ok(password)
 }
 
-/// Generate a passphrase using Diceware word list
-pub fn generate_passphrase(word_count: usize) -> String {
-    // Built-in Diceware word list (subset for V1)
-    const DICEWARE_WORDS: &[&str] = &[ // TODO: Replace with a proper Diceware word list (txt file)
-        "abacus", "abdomen", "abdominal", "abide", "abiding", "ability",
-        "ablaze", "able", "abnormal", "abode", "abolish", "abrasive",
-        "abruptly", "absence", "absolute", "absolve", "abstain", "abstract",
-        "absurd", "accent", "accept", "access", "accident", "acclaim",
-        "acclaim", "accord", "account", "accuracy", "accurate", "accustom",
-        "acetone", "achiness", "aching", "acid", "acorn", "acoustic",
-        "acquire", "acre", "acrobat", "acronym", "acting", "action",
-        "activate", "activator", "active", "activism", "activist", "activity",
-        "actress", "acts", "acutely", "acuteness", "aeration", "aerobics",
-        "aerosol", "aerospace", "aesthetic", "affair", "affected", "affecting",
-        "affection", "affidavit", "affiliate", "affirm", "affix", "afflicted",
-        "affluent", "afford", "affront", "aflame", "afloat", "afoot",
-        "afraid", "afterglow", "afterlife", "aftermath", "aftermost", "afternoon",
-        "aged", "ageless", "agency", "agenda", "agent", "aggregate",
-        "aghast", "agile", "agility", "aging", "agnostic", "agonize",
-        "agonizing", "agony", "agree", "agreeable", "agreed", "agreeing",
-        "agreement", "aground", "ahead", "ahoy", "aide", "aids",
-        "aim", "ajar", "alabaster", "alarm", "albatross", "album",
-        "alfalfa", "algebra", "algorithm", "alias", "alibi", "alien",
-        "alienate", "alight", "align", "alike", "alive", "alkaline",
-    ];
-
-    use ring::rand::{SecureRandom, SystemRandom};
-
-    let rng = SystemRandom::new();
-    let mut bytes = vec![0u8; word_count * 2];
-    rng.fill(&mut bytes).unwrap();
-
-    let mut words = Vec::with_capacity(word_count);
-    let mut byte_idx = 0;
-
-    for _ in 0..word_count {
-        if byte_idx + 2 > bytes.len() {
-            ring::rand::SystemRandom::new().fill(&mut bytes).unwrap();
-            byte_idx = 0;
-        }
-        let val = u16::from_le_bytes([bytes[byte_idx], bytes[byte_idx + 1]]) as usize;
-        words.push(DICEWARE_WORDS[val % DICEWARE_WORDS.len()]);
-        byte_idx += 2;
+/// Generate a passphrase using the EFF large Diceware word list (7776 words)
+pub fn generate_passphrase(word_count: usize) -> Result<String, String> {
+    const MIN_WORDS: usize = 3;
+    const MAX_WORDS: usize = 20;
+    if !(MIN_WORDS..=MAX_WORDS).contains(&word_count) {
+        return Err(format!(
+            "Word count must be between {} and {}",
+            MIN_WORDS, MAX_WORDS
+        ));
     }
 
-    words.join("-")
+    // EFF Large Wordlist — one word per line (7776 entries, ~12.9 bits/word)
+    static WORDS: once_cell::sync::Lazy<Vec<&'static str>> = once_cell::sync::Lazy::new(|| {
+        include_str!("../../assets/eff_large_wordlist.txt")
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect()
+    });
+
+    if WORDS.len() < 7776 {
+        return Err("Diceware word list is incomplete".to_string());
+    }
+
+    use ring::rand::SystemRandom;
+
+    let rng = SystemRandom::new();
+    let mut words = Vec::with_capacity(word_count);
+    let bound = WORDS.len() as u32;
+
+    for _ in 0..word_count {
+        // Rejection sampling to avoid modulo bias
+        let idx = random_index(&rng, bound)?;
+        words.push(WORDS[idx as usize]);
+    }
+
+    Ok(words.join("-"))
+}
+
+fn random_index(rng: &ring::rand::SystemRandom, bound: u32) -> Result<u32, String> {
+    use ring::rand::SecureRandom;
+    // Rejection sampling: discard values in the biased remainder range
+    let threshold = (u32::MAX / bound) * bound;
+    loop {
+        let mut buf = [0u8; 4];
+        rng.fill(&mut buf)
+            .map_err(|_| "Failed to generate random bytes".to_string())?;
+        let val = u32::from_le_bytes(buf);
+        if val < threshold {
+            return Ok(val % bound);
+        }
+    }
 }
 
 // ============================================================================
@@ -621,8 +618,8 @@ pub fn generate_totp(secret: &str) -> Result<TOTPResult, String> {
 
     type HmacSha1 = Hmac<Sha1>;
 
-    // Decode base32 secret
-    let secret_bytes = decode_base32(secret)?;
+    // Decode base32 secret (also accepts otpauth:// URIs)
+    let secret_bytes = decode_base32(&extract_totp_secret(secret))?;
     let secret_key = Secret::new(secret_bytes);
 
     // Get current time step (30 second intervals)
@@ -653,6 +650,28 @@ pub fn generate_totp(secret: &str) -> Result<TOTPResult, String> {
         code,
         time_remaining,
     })
+}
+
+/// Extract a base32 secret from a raw secret or otpauth:// URI
+fn extract_totp_secret(input: &str) -> String {
+    let trimmed = input.trim();
+    if !trimmed.to_lowercase().starts_with("otpauth://") {
+        return trimmed.to_string();
+    }
+
+    // otpauth://totp/Label?secret=BASE32&issuer=...
+    if let Some(query) = trimmed.split('?').nth(1) {
+        for pair in query.split('&') {
+            let mut parts = pair.splitn(2, '=');
+            if let (Some(key), Some(value)) = (parts.next(), parts.next()) {
+                if key.eq_ignore_ascii_case("secret") {
+                    return value.to_string();
+                }
+            }
+        }
+    }
+
+    trimmed.to_string()
 }
 
 /// Decode a base32 string to bytes

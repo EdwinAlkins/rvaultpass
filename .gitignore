@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 QWEN.md
 .qwen/
+# graphify knowledge graph output
+graphify-out/

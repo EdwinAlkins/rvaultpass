@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../stores/app';
 import * as api from '../api';
+import { open } from '@tauri-apps/plugin-dialog';
 import './TopBar.css';
 
 interface TopBarProps {
@@ -12,13 +13,13 @@ export default function TopBar({ onAddEntry, onToggleGenerator }: TopBarProps) {
   const { t } = useTranslation();
   const {
     darkMode, toggleDarkMode, language, setLanguage,
-    setVaultOpen, addNotification, viewFilter,
+    clearVaultState, addNotification, viewFilter, refreshData,
   } = useAppStore();
 
   const handleLock = async () => {
     try {
       await api.lockVault();
-      setVaultOpen(false);
+      clearVaultState();
       addNotification(t('notif.vault_locked'), 'success');
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Error';
@@ -32,6 +33,39 @@ export default function TopBar({ onAddEntry, onToggleGenerator }: TopBarProps) {
       addNotification(t('notif.vault_saved'), 'success');
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Error';
+      addNotification(msg, 'error');
+    }
+  };
+
+  const handleImportDashlane = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: 'CSV', extensions: ['csv'] }],
+      });
+      if (!selected || Array.isArray(selected)) {
+        return;
+      }
+
+      const summary = await api.importDashlaneCsv(selected);
+      await refreshData();
+
+      if (summary.skipped > 0 || summary.errors.length > 0) {
+        addNotification(
+          t('notif.import_partial', {
+            imported: summary.imported,
+            skipped: summary.skipped,
+          }),
+          summary.imported > 0 ? 'info' : 'error',
+        );
+      } else {
+        addNotification(
+          t('notif.import_done', { count: summary.imported }),
+          'success',
+        );
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : t('notif.import_failed');
       addNotification(msg, 'error');
     }
   };
@@ -60,6 +94,13 @@ export default function TopBar({ onAddEntry, onToggleGenerator }: TopBarProps) {
         <button class="action-btn" onClick={onAddEntry} title={t('entry.add')}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
             <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd"/>
+          </svg>
+        </button>
+
+        <button class="action-btn" onClick={handleImportDashlane} title={t('action.import_dashlane')}>
+          <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
+            <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
+            <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
           </svg>
         </button>
 

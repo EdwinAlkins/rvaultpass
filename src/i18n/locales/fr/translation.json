@@ -1,0 +1,123 @@
+{
+  "app": {
+    "title": "RVaultPass"
+  },
+  "common": {
+    "save": "Sauvegarder",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "add": "Ajouter",
+    "search": "Rechercher...",
+    "close": "Fermer",
+    "copy": "Copier",
+    "copied": "Copié !",
+    "loading": "Chargement...",
+    "error": "Erreur",
+    "success": "Succès"
+  },
+  "vault": {
+    "welcome": "Bienvenue sur RVaultPass",
+    "description": "Votre coffre-fort local zero-knowledge",
+    "create": "Créer un coffre",
+    "open": "Ouvrir un coffre",
+    "file_path": "Chemin du fichier",
+    "file_path_placeholder": "/chemin/vers/coffre.vault",
+    "browse": "Parcourir...",
+    "create_title": "Créer un coffre",
+    "open_title": "Ouvrir un coffre",
+    "password": "Mot de passe maître",
+    "password_placeholder": "Entrez votre mot de passe maître",
+    "confirm_password": "Confirmer le mot de passe",
+    "confirm_password_placeholder": "Confirmez votre mot de passe maître",
+    "creating": "Création du coffre...",
+    "opening": "Ouverture du coffre...",
+    "passwords_mismatch": "Les mots de passe ne correspondent pas",
+    "empty_password": "Le mot de passe ne peut pas être vide",
+    "empty_path": "Le chemin du fichier ne peut pas être vide"
+  },
+  "sidebar": {
+    "entries": "Toutes les entrées",
+    "favorites": "Favoris",
+    "folders": "Dossiers",
+    "tags": "Étiquettes",
+    "add_folder": "Ajouter dossier",
+    "add_tag": "Ajouter étiquette",
+    "new_folder_name": "Nouveau dossier",
+    "new_tag_name": "Nouvelle étiquette"
+  },
+  "entry": {
+    "list": {
+      "empty": "Aucune entrée",
+      "empty_desc": "Créez votre première entrée"
+    },
+    "add": "Ajouter entrée",
+    "edit": "Modifier entrée",
+    "delete_confirm": "Êtes-vous sûr de vouloir supprimer cette entrée ?",
+    "no_password": "Pas de mot de passe",
+    "title": "Titre",
+    "title_placeholder": "Exemple : Gmail",
+    "url": "URL",
+    "url_placeholder": "https://exemple.com",
+    "username": "Nom d'utilisateur",
+    "username_placeholder": "user@exemple.com",
+    "username2": "Identifiant 2",
+    "username2_placeholder": "Identifiant / e-mail secondaire",
+    "username3": "Identifiant 3",
+    "username3_placeholder": "Champ de connexion supplémentaire",
+    "password": "Mot de passe",
+    "notes": "Notes",
+    "notes_placeholder": "Notes additionnelles...",
+    "totp_secret": "Secret TOTP",
+    "totp_secret_placeholder": "Secret Base32 ou URI",
+    "folder": "Dossier",
+    "tags": "Étiquettes",
+    "is_favorite": "Marquer comme favori",
+    "generate_password": "Générer mot de passe",
+    "password_keep_hint": "laisser vide pour conserver",
+    "totp_keep_hint": "laisser vide pour conserver",
+    "reveal": "Afficher",
+    "reveal_notes": "Afficher les notes"
+  },
+  "generator": {
+    "title": "Générateur de mot de passe",
+    "length": "Longueur",
+    "uppercase": "Majuscules (A-Z)",
+    "lowercase": "Minuscules (a-z)",
+    "numbers": "Chiffres (0-9)",
+    "symbols": "Symboles (!@#$)",
+    "exclude_ambiguous": "Exclure ambigus (l, 1, O, 0)",
+    "generate": "Générer",
+    "passphrase": "Phrase de passe",
+    "word_count": "Nombre de mots",
+    "generate_passphrase": "Générer phrase de passe"
+  },
+  "totp": {
+    "title": "Code TOTP",
+    "time_remaining": "Rafraîchit dans {{seconds}}s"
+  },
+  "theme": {
+    "dark": "Mode sombre",
+    "light": "Mode clair"
+  },
+  "action": {
+    "lock": "Verrouiller",
+    "save": "Sauvegarder",
+    "locked": "Coffre verrouillé",
+    "import_dashlane": "Importer CSV Dashlane"
+  },
+  "notif": {
+    "entry_created": "Entrée créée",
+    "entry_updated": "Entrée mise à jour",
+    "entry_deleted": "Entrée supprimée",
+    "folder_created": "Dossier créé",
+    "tag_created": "Étiquette créée",
+    "vault_saved": "Coffre sauvegardé",
+    "vault_locked": "Coffre verrouillé",
+    "copied_clipboard": "Copié dans le presse-papiers",
+    "clipboard_warning": "Attention : le contenu sera effacé dans 30s",
+    "import_done": "{{count}} entrées importées depuis Dashlane",
+    "import_partial": "{{imported}} entrées importées ({{skipped}} ignorées)",
+    "import_failed": "Échec de l'import Dashlane"
+  }
+}

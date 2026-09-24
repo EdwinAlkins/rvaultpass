@@ -1,7 +1,8 @@
-import { useEffect, useMemo } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from './stores/app';
-import type { VaultEntry } from './types';
+import type { EntrySummary } from './types';
+import * as api from './api';
 
 import VaultScreen from './components/VaultScreen';
 import Sidebar from './components/Sidebar';
@@ -27,19 +28,25 @@ function App() {
     setSelectedEntry,
   } = useAppStore();
 
-  // Sync language
+  const [revealedPassword, setRevealedPassword] = useState<string | null>(null);
+  const [revealedNotes, setRevealedNotes] = useState<string | null>(null);
+
   useEffect(() => {
     if (i18n.language !== language) {
       i18n.changeLanguage(language);
     }
   }, [language, i18n]);
 
-  // Apply theme
   useEffect(() => {
     document.documentElement.classList.toggle('light', !darkMode);
   }, [darkMode]);
 
-  // Filtered entries
+  // Clear ephemeral reveals when selection changes
+  useEffect(() => {
+    setRevealedPassword(null);
+    setRevealedNotes(null);
+  }, [selectedEntryId]);
+
   const filteredEntries = useMemo(() => {
     let result = entries;
 
@@ -62,14 +69,52 @@ function App() {
     return result;
   }, [entries, viewFilter, selectedFolderId, selectedTagId, searchResults]);
 
-  // Selected entry for detail panel
   const selectedEntry = useMemo(
     () => entries.find((e) => e.id === selectedEntryId) ?? null,
     [entries, selectedEntryId]
   );
 
-  const handleEntryClick = (entry: VaultEntry) => {
+  const handleEntryClick = (entry: EntrySummary) => {
     setSelectedEntry(entry.id);
+  };
+
+  const handleRevealPassword = async () => {
+    if (!selectedEntry) return;
+    try {
+      const pw = await api.revealPassword(selectedEntry.id);
+      setRevealedPassword(pw);
+      // Auto-hide after 15s
+      setTimeout(() => setRevealedPassword(null), 15000);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Error';
+      useAppStore.getState().addNotification(msg, 'error');
+    }
+  };
+
+  const handleCopyField = async (field: string) => {
+    if (!selectedEntry) return;
+    try {
+      await api.copyEntryField(selectedEntry.id, field);
+      useAppStore.getState().addNotification(
+        t('notif.copied_clipboard') + ' — ' + t('notif.clipboard_warning'),
+        'info',
+      );
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Error';
+      useAppStore.getState().addNotification(msg, 'error');
+    }
+  };
+
+  const handleRevealNotes = async () => {
+    if (!selectedEntry) return;
+    try {
+      // Notes are fetched via edit endpoint (no password/totp)
+      const data = await api.getEntry(selectedEntry.id);
+      setRevealedNotes(data.notes ?? '');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Error';
+      useAppStore.getState().addNotification(msg, 'error');
+    }
   };
 
   if (!vaultOpen) {
@@ -93,21 +138,20 @@ function App() {
           <EntryList entries={filteredEntries} onEntryClick={handleEntryClick} />
         </div>
 
-        {/* Entry detail panel when selected */}
         {selectedEntry && (
           <div class="detail-panel">
             <div class="detail-header">
               <h2>{selectedEntry.title}</h2>
               <div class="detail-actions">
-                <button class="detail-btn" onClick={() => startEditEntry(selectedEntry)}>
+                <button class="detail-btn" onClick={() => startEditEntry(selectedEntry.id)}>
                   {t('common.edit')}
                 </button>
                 <button
                   class="detail-btn danger"
                   onClick={async () => {
                     if (window.confirm(t('entry.delete_confirm'))) {
-                      const { deleteEntry } = await import('./api');
-                      await deleteEntry(selectedEntry.id);
+                      await api.deleteEntry(selectedEntry.id);
+                      await api.saveVault();
                       setSelectedEntry(null);
                       await refreshData();
                     }
@@ -126,41 +170,64 @@ function App() {
                 <DetailField
                   label={t('entry.username')}
                   value={selectedEntry.username}
-                  copyable
+                  onCopy={() => handleCopyField('username')}
+                />
+              )}
+              {selectedEntry.username2 && (
+                <DetailField
+                  label={t('entry.username2')}
+                  value={selectedEntry.username2}
+                  onCopy={() => handleCopyField('username2')}
+                />
+              )}
+              {selectedEntry.username3 && (
+                <DetailField
+                  label={t('entry.username3')}
+                  value={selectedEntry.username3}
+                  onCopy={() => handleCopyField('username3')}
                 />
               )}
               {selectedEntry.url && (
                 <DetailField
                   label={t('entry.url')}
                   value={selectedEntry.url}
-                  copyable
+                  onCopy={() => handleCopyField('url')}
                   link
                 />
               )}
-              {selectedEntry.password && (
+              {selectedEntry.has_password && (
                 <DetailField
                   label={t('entry.password')}
-                  value="••••••••"
-                  rawValue={selectedEntry.password}
-                  copyable
+                  value={revealedPassword ?? '••••••••'}
+                  onCopy={() => handleCopyField('password')}
+                  onReveal={!revealedPassword ? handleRevealPassword : undefined}
                 />
               )}
-              {selectedEntry.notes && (
-                <DetailField
-                  label={t('entry.notes')}
-                  value={selectedEntry.notes}
-                  multiline
-                />
+              {selectedEntry.has_notes && (
+                revealedNotes !== null ? (
+                  <DetailField
+                    label={t('entry.notes')}
+                    value={revealedNotes}
+                    multiline
+                    onCopy={() => handleCopyField('notes')}
+                  />
+                ) : (
+                  <div class="detail-field">
+                    <label class="detail-label">{t('entry.notes')}</label>
+                    <button class="detail-btn" onClick={handleRevealNotes}>
+                      {t('entry.reveal_notes')}
+                    </button>
+                  </div>
+                )
               )}
-              {selectedEntry.totp_secret && (
-                <TOTPDisplay secret={selectedEntry.totp_secret} />
+              {selectedEntry.has_totp && (
+                <TOTPDisplay entryId={selectedEntry.id} />
               )}
             </div>
           </div>
         )}
       </div>
 
-      {/* Entry Form Modal */}
       {showEntryForm && (
         <EntryForm
           entry={editingEntry}
@@ -175,7 +242,6 @@ function App() {
         />
       )}
 
-      {/* Password Generator Modal */}
       {showGenerator && (
         <PasswordGenerator onClose={toggleGenerator} />
       )}
@@ -185,24 +251,17 @@ function App() {
   );
 }
 
-// Detail field sub-component
 interface DetailFieldProps {
   label: string;
   value: string;
-  rawValue?: string;
-  copyable?: boolean;
+  onCopy?: () => void;
+  onReveal?: () => void;
   link?: boolean;
   multiline?: boolean;
 }
 
-function DetailField({ label, value, rawValue, copyable, link, multiline }: DetailFieldProps) {
-  const { addNotification } = useAppStore();
-
-  const handleCopy = () => {
-    const text = rawValue ?? value;
-    navigator.clipboard.writeText(text);
-    addNotification('Copied to clipboard', 'info');
-  };
+function DetailField({ label, value, onCopy, onReveal, link, multiline }: DetailFieldProps) {
+  const { t } = useTranslation();
 
   return (
     <div class="detail-field">
@@ -217,8 +276,13 @@ function DetailField({ label, value, rawValue, copyable, link, multiline }: Deta
         ) : (
           <span>{value}</span>
         )}
-        {copyable && rawValue && (
-          <button class="detail-copy-btn" onClick={handleCopy}>
+        {onReveal && (
+          <button class="detail-copy-btn" onClick={onReveal} title={t('entry.reveal')}>
+            👁
+          </button>
+        )}
+        {onCopy && (
+          <button class="detail-copy-btn" onClick={onCopy} title={t('common.copy')}>
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
               <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z"/>
               <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z"/>

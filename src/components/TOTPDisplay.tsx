@@ -5,10 +5,10 @@ import * as api from '../api';
 import './TOTPDisplay.css';
 
 interface TOTPDisplayProps {
-  secret: string;
+  entryId: string;
 }
 
-export default function TOTPDisplay({ secret }: TOTPDisplayProps) {
+export default function TOTPDisplay({ entryId }: TOTPDisplayProps) {
   const { t } = useTranslation();
   const { darkMode, addNotification } = useAppStore();
   const [code, setCode] = useState('');
@@ -16,7 +16,7 @@ export default function TOTPDisplay({ secret }: TOTPDisplayProps) {
 
   const generate = async () => {
     try {
-      const result = await api.generateTOTP(secret);
+      const result = await api.generateTOTPForEntry(entryId);
       setCode(result.code);
       setTimeRemaining(result.time_remaining);
     } catch {
@@ -25,7 +25,7 @@ export default function TOTPDisplay({ secret }: TOTPDisplayProps) {
   };
 
   useEffect(() => {
-    if (!secret) return;
+    if (!entryId) return;
     generate();
 
     const interval = setInterval(() => {
@@ -39,22 +39,23 @@ export default function TOTPDisplay({ secret }: TOTPDisplayProps) {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [secret]);
+  }, [entryId]);
 
-  const handleCopy = () => {
-    if (code) {
-      navigator.clipboard.writeText(code);
+  const handleCopy = async () => {
+    try {
+      await api.copyTOTP(entryId);
       addNotification(t('notif.copied_clipboard') + ' — ' + t('notif.clipboard_warning'), 'info');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Error';
+      addNotification(msg, 'error');
     }
   };
-
-  if (!secret) return null;
 
   return (
     <div class="totp-display" data-theme={darkMode ? 'dark' : 'light'}>
       <div class="totp-header">
         <span class="totp-label">{t('totp.title')}</span>
-        <span class="totp-timer" style={{ '--time': timeRemaining } as any}>
+        <span class="totp-timer">
           {t('totp.time_remaining', { seconds: timeRemaining })}
         </span>
       </div>

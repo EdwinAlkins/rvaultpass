@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { VaultEntry, VaultFolder, VaultTag } from '../types';
+import type { EntrySummary, EntryEditData, VaultFolder, VaultTag } from '../types';
 import * as api from '../api';
 
 export interface Notification {
@@ -20,12 +20,13 @@ interface AppState {
   // Vault state
   vaultOpen: boolean;
   setVaultOpen: (open: boolean) => void;
+  clearVaultState: () => void;
 
-  // Data
-  entries: VaultEntry[];
+  // Data (summaries only — no secrets)
+  entries: EntrySummary[];
   folders: VaultFolder[];
   tags: VaultTag[];
-  setEntries: (entries: VaultEntry[]) => void;
+  setEntries: (entries: EntrySummary[]) => void;
   setFolders: (folders: VaultFolder[]) => void;
   setTags: (tags: VaultTag[]) => void;
   refreshData: () => Promise<void>;
@@ -41,10 +42,10 @@ interface AppState {
   setViewFilter: (filter: 'all' | 'favorites' | 'folder' | 'tag', id?: string | null) => void;
 
   // Editing
-  editingEntry: VaultEntry | null;
+  editingEntry: EntryEditData | null;
   showEntryForm: boolean;
   startNewEntry: () => void;
-  startEditEntry: (entry: VaultEntry) => void;
+  startEditEntry: (entryId: string) => Promise<void>;
   closeEntryForm: () => void;
 
   // Generator
@@ -54,8 +55,8 @@ interface AppState {
   // Search
   searchQuery: string;
   setSearchQuery: (query: string) => void;
-  searchResults: VaultEntry[] | null;
-  setSearchResults: (results: VaultEntry[] | null) => void;
+  searchResults: EntrySummary[] | null;
+  setSearchResults: (results: EntrySummary[] | null) => void;
 
   // Notifications
   notifications: Notification[];
@@ -64,19 +65,31 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
-  // Theme
   darkMode: true,
   toggleDarkMode: () => set((state) => ({ darkMode: !state.darkMode })),
 
-  // Language
   language: 'en',
   setLanguage: (lang) => set({ language: lang }),
 
-  // Vault state
   vaultOpen: false,
   setVaultOpen: (open) => set({ vaultOpen: open }),
+  clearVaultState: () =>
+    set({
+      vaultOpen: false,
+      entries: [],
+      folders: [],
+      tags: [],
+      selectedEntryId: null,
+      selectedFolderId: null,
+      selectedTagId: null,
+      viewFilter: 'all',
+      editingEntry: null,
+      showEntryForm: false,
+      showGenerator: false,
+      searchQuery: '',
+      searchResults: null,
+    }),
 
-  // Data
   entries: [],
   folders: [],
   tags: [],
@@ -97,7 +110,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  // Selection
   selectedEntryId: null,
   selectedFolderId: null,
   selectedTagId: null,
@@ -111,24 +123,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     else set({ viewFilter: filter, selectedFolderId: null, selectedTagId: null });
   },
 
-  // Editing
   editingEntry: null,
   showEntryForm: false,
   startNewEntry: () => set({ editingEntry: null, showEntryForm: true }),
-  startEditEntry: (entry) => set({ editingEntry: { ...entry }, showEntryForm: true }),
+  startEditEntry: async (entryId) => {
+    try {
+      const editData = await api.getEntry(entryId);
+      set({ editingEntry: editData, showEntryForm: true });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Failed to load entry';
+      get().addNotification(message, 'error');
+    }
+  },
   closeEntryForm: () => set({ editingEntry: null, showEntryForm: false }),
 
-  // Generator
   showGenerator: false,
   toggleGenerator: () => set((state) => ({ showGenerator: !state.showGenerator })),
 
-  // Search
   searchQuery: '',
   setSearchQuery: (query) => set({ searchQuery: query }),
   searchResults: null,
   setSearchResults: (results) => set({ searchResults: results }),
 
-  // Notifications
   notifications: [],
   addNotification: (message, type) => {
     const id = Date.now().toString() + Math.random().toString(36).slice(2);

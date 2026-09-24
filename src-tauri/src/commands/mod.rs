@@ -6,7 +6,12 @@
 use serde::{Deserialize, Serialize};
 use crate::vault::VaultManager;
 use crate::db::operations;
-use crate::models::{VaultEntry, VaultFolder, VaultTag, PasswordGenerationParams, TOTPResult};
+use crate::import::{self, ImportSummary};
+use crate::models::{
+    VaultFolder, VaultTag, PasswordGenerationParams, TOTPResult,
+    EntrySummary, EntryEditData,
+};
+use crate::clipboard;
 
 /// Response wrapper for all commands
 #[derive(Debug, Serialize, Deserialize)]
@@ -78,10 +83,17 @@ pub async fn open_vault(
     }
 }
 
-/// Lock the vault (clear encryption key from memory)
+/// Lock the vault (flush changes, clear clipboard, destroy session)
 #[tauri::command]
 pub async fn lock_vault() -> CommandResult<bool> {
     tracing::info!("Locking vault");
+
+    // Persist working DB before destroying the session
+    if let Err(e) = VaultManager::save_vault() {
+        tracing::warn!("Save before lock failed (continuing lock): {}", e);
+    }
+
+    clipboard::clear_pending();
 
     match VaultManager::lock_vault() {
         Ok(_) => {
@@ -129,18 +141,32 @@ pub async fn create_entry(
     title: String,
     url: Option<String>,
     username: Option<String>,
+    username2: Option<String>,
+    username3: Option<String>,
     password: String,
     notes: Option<String>,
     totp_secret: Option<String>,
     is_favorite: bool,
     tag_ids: Option<Vec<String>>,
-) -> CommandResult<VaultEntry> {
+) -> CommandResult<EntrySummary> {
     tracing::info!("Creating entry: {}", title);
 
-    match operations::create_entry(folder_id, title, url, username, password, notes, totp_secret, is_favorite, tag_ids) {
+    match operations::create_entry(
+        folder_id,
+        title,
+        url,
+        username,
+        username2,
+        username3,
+        password,
+        notes,
+        totp_secret,
+        is_favorite,
+        tag_ids,
+    ) {
         Ok(entry) => {
             tracing::info!("Entry created: {}", entry.id);
-            CommandResult::ok(entry)
+            CommandResult::ok(entry.to_summary())
         }
         Err(e) => {
             tracing::error!("Failed to create entry: {}", e);
@@ -149,11 +175,11 @@ pub async fn create_entry(
     }
 }
 
-/// Get all entries
+/// Get all entries (summaries only — no secrets)
 #[tauri::command]
-pub async fn get_all_entries() -> CommandResult<Vec<VaultEntry>> {
+pub async fn get_all_entries() -> CommandResult<Vec<EntrySummary>> {
     match operations::get_all_entries() {
-        Ok(entries) => CommandResult::ok(entries),
+        Ok(entries) => CommandResult::ok(entries.into_iter().map(|e| e.to_summary()).collect()),
         Err(e) => {
             tracing::error!("Failed to get entries: {}", e);
             CommandResult::err(e)
@@ -161,11 +187,11 @@ pub async fn get_all_entries() -> CommandResult<Vec<VaultEntry>> {
     }
 }
 
-/// Get a single entry by ID
+/// Get editable metadata for an entry (no password / TOTP secret)
 #[tauri::command]
-pub async fn get_entry(entry_id: String) -> CommandResult<VaultEntry> {
+pub async fn get_entry(entry_id: String) -> CommandResult<EntryEditData> {
     match operations::get_entry(&entry_id) {
-        Ok(entry) => CommandResult::ok(entry),
+        Ok(entry) => CommandResult::ok(entry.to_edit_data()),
         Err(e) => {
             tracing::error!("Failed to get entry: {}", e);
             CommandResult::err(e)
@@ -181,12 +207,14 @@ pub async fn update_entry(
     title: Option<String>,
     url: Option<String>,
     username: Option<String>,
+    username2: Option<String>,
+    username3: Option<String>,
     password: Option<String>,
     notes: Option<String>,
     totp_secret: Option<String>,
     is_favorite: Option<bool>,
     tag_ids: Option<Vec<String>>,
-) -> CommandResult<VaultEntry> {
+    ) -> CommandResult<EntrySummary> {
     tracing::info!("Updating entry: {}", entry_id);
 
     // Fetch existing entry to get current values
@@ -198,21 +226,30 @@ pub async fn update_entry(
         }
     };
 
+    // Empty password / totp from UI means "keep existing"
+    let password = password.filter(|p| !p.is_empty());
+    let totp_secret = match totp_secret {
+        Some(s) if s.is_empty() => existing.totp_secret.clone(),
+        other => other.or(existing.totp_secret.clone()),
+    };
+
     match operations::update_entry(
         entry_id,
         folder_id.or(existing.folder_id),
         title.unwrap_or(existing.title),
         url.or(existing.url),
         username.or(existing.username),
+        username2.or(existing.username2),
+        username3.or(existing.username3),
         password,
         notes.or(existing.notes),
-        totp_secret.or(existing.totp_secret),
+        totp_secret,
         is_favorite,
         tag_ids,
     ) {
         Ok(entry) => {
             tracing::info!("Entry updated: {}", entry.id);
-            CommandResult::ok(entry)
+            CommandResult::ok(entry.to_summary())
         }
         Err(e) => {
             tracing::error!("Failed to update entry: {}", e);
@@ -363,11 +400,11 @@ pub async fn delete_tag(tag_id: String) -> CommandResult<bool> {
 // Search Commands
 // ============================================================================
 
-/// Search entries using full-text search
+/// Search entries using full-text search (summaries only)
 #[tauri::command]
-pub async fn search_entries(query: String) -> CommandResult<Vec<VaultEntry>> {
+pub async fn search_entries(query: String) -> CommandResult<Vec<EntrySummary>> {
     match operations::search_entries(&query) {
-        Ok(entries) => CommandResult::ok(entries),
+        Ok(entries) => CommandResult::ok(entries.into_iter().map(|e| e.to_summary()).collect()),
         Err(e) => {
             tracing::error!("Failed to search entries: {}", e);
             CommandResult::err(e)
@@ -382,28 +419,147 @@ pub async fn search_entries(query: String) -> CommandResult<Vec<VaultEntry>> {
 /// Generate a password
 #[tauri::command]
 pub async fn generate_password(params: PasswordGenerationParams) -> CommandResult<String> {
-    let password = operations::generate_password(&params);
-    CommandResult::ok(password)
+    match operations::generate_password(&params) {
+        Ok(password) => CommandResult::ok(password),
+        Err(e) => CommandResult::err(e),
+    }
 }
 
 /// Generate a Diceware passphrase
 #[tauri::command]
 pub async fn generate_passphrase(word_count: usize) -> CommandResult<String> {
-    let passphrase = operations::generate_passphrase(word_count);
-    CommandResult::ok(passphrase)
+    match operations::generate_passphrase(word_count) {
+        Ok(passphrase) => CommandResult::ok(passphrase),
+        Err(e) => CommandResult::err(e),
+    }
 }
 
 // ============================================================================
-// TOTP Commands
+// Secret access (never bulk-exported to frontend)
 // ============================================================================
 
-/// Generate a TOTP code
+/// Reveal password briefly for display (caller must not persist)
 #[tauri::command]
-pub async fn generate_totp(secret: String) -> CommandResult<TOTPResult> {
-    match operations::generate_totp(&secret) {
-        Ok(result) => CommandResult::ok(result),
+pub async fn reveal_password(entry_id: String) -> CommandResult<String> {
+    match operations::get_entry(&entry_id) {
+        Ok(entry) => CommandResult::ok(entry.password),
+        Err(e) => CommandResult::err(e),
+    }
+}
+
+/// Copy password to clipboard with auto-clear
+#[tauri::command]
+pub async fn copy_password(entry_id: String) -> CommandResult<bool> {
+    match operations::get_entry(&entry_id) {
+        Ok(entry) => match clipboard::copy_secret(&entry.password) {
+            Ok(()) => CommandResult::ok(true),
+            Err(e) => CommandResult::err(e),
+        },
+        Err(e) => CommandResult::err(e),
+    }
+}
+
+/// Copy an arbitrary non-secret field via secure clipboard (username, url, notes…)
+#[tauri::command]
+pub async fn copy_entry_field(entry_id: String, field: String) -> CommandResult<bool> {
+    let entry = match operations::get_entry(&entry_id) {
+        Ok(e) => e,
+        Err(e) => return CommandResult::err(e),
+    };
+
+    let value = match field.as_str() {
+        "username" => entry.username.unwrap_or_default(),
+        "username2" => entry.username2.unwrap_or_default(),
+        "username3" => entry.username3.unwrap_or_default(),
+        "url" => entry.url.unwrap_or_default(),
+        "notes" => entry.notes.unwrap_or_default(),
+        "password" => entry.password,
+        _ => return CommandResult::err(format!("Unknown field: {}", field)),
+    };
+
+    if value.is_empty() {
+        return CommandResult::err("Field is empty".to_string());
+    }
+
+    match clipboard::copy_secret(&value) {
+        Ok(()) => CommandResult::ok(true),
+        Err(e) => CommandResult::err(e),
+    }
+}
+
+/// Generate TOTP for an entry (secret stays in Rust)
+#[tauri::command]
+pub async fn generate_totp_for_entry(entry_id: String) -> CommandResult<TOTPResult> {
+    match operations::get_entry(&entry_id) {
+        Ok(entry) => {
+            let Some(secret) = entry.totp_secret.filter(|s| !s.is_empty()) else {
+                return CommandResult::err("Entry has no TOTP secret".to_string());
+            };
+            match operations::generate_totp(&secret) {
+                Ok(result) => CommandResult::ok(result),
+                Err(e) => CommandResult::err(e),
+            }
+        }
+        Err(e) => CommandResult::err(e),
+    }
+}
+
+/// Copy current TOTP code to clipboard with auto-clear
+#[tauri::command]
+pub async fn copy_totp(entry_id: String) -> CommandResult<bool> {
+    match operations::get_entry(&entry_id) {
+        Ok(entry) => {
+            let Some(secret) = entry.totp_secret.filter(|s| !s.is_empty()) else {
+                return CommandResult::err("Entry has no TOTP secret".to_string());
+            };
+            match operations::generate_totp(&secret) {
+                Ok(result) => match clipboard::copy_secret(&result.code) {
+                    Ok(()) => CommandResult::ok(true),
+                    Err(e) => CommandResult::err(e),
+                },
+                Err(e) => CommandResult::err(e),
+            }
+        }
+        Err(e) => CommandResult::err(e),
+    }
+}
+
+/// Copy generated text (password generator) via secure clipboard
+#[tauri::command]
+pub async fn copy_to_clipboard(text: String) -> CommandResult<bool> {
+    if text.len() > 8192 {
+        return CommandResult::err("Text too long to copy".to_string());
+    }
+    match clipboard::copy_secret(&text) {
+        Ok(()) => CommandResult::ok(true),
+        Err(e) => CommandResult::err(e),
+    }
+}
+
+// ============================================================================
+// Import Commands
+// ============================================================================
+
+/// Import entries from a Dashlane credentials.csv file
+#[tauri::command]
+pub async fn import_dashlane_csv(path: String) -> CommandResult<ImportSummary> {
+    tracing::info!("Importing Dashlane CSV");
+
+    match import::import_dashlane_csv(std::path::Path::new(&path)) {
+        Ok(summary) => {
+            // Persist imported data immediately
+            if let Err(e) = VaultManager::save_vault() {
+                tracing::warn!("Auto-save after import failed: {}", e);
+            }
+            tracing::info!(
+                "Dashlane import done: {} imported, {} skipped",
+                summary.imported,
+                summary.skipped
+            );
+            CommandResult::ok(summary)
+        }
         Err(e) => {
-            tracing::error!("Failed to generate TOTP: {}", e);
+            tracing::error!("Dashlane import failed: {}", e);
             CommandResult::err(e)
         }
     }

@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 
 -- Insert version
-INSERT OR IGNORE INTO meta (key, value) VALUES ('version', '1');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('version', '2');
 
 -- Folders table
 CREATE TABLE IF NOT EXISTS folders (
@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS entries (
     title TEXT NOT NULL,
     url TEXT,
     username TEXT,
+    username2 TEXT,
+    username3 TEXT,
     password TEXT NOT NULL,
     notes TEXT,
     totp_secret TEXT,

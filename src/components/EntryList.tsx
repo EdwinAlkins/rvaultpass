@@ -1,11 +1,11 @@
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../stores/app';
-import type { VaultEntry } from '../types';
+import type { EntrySummary } from '../types';
 import './EntryList.css';
 
 interface EntryListProps {
-  entries: VaultEntry[];
-  onEntryClick: (entry: VaultEntry) => void;
+  entries: EntrySummary[];
+  onEntryClick: (entry: EntrySummary) => void;
 }
 
 export default function EntryList({ entries, onEntryClick }: EntryListProps) {
@@ -31,6 +31,7 @@ export default function EntryList({ entries, onEntryClick }: EntryListProps) {
     <div class="entry-list" data-theme={darkMode ? 'dark' : 'light'}>
       {entries.map((entry) => (
         <div
+          key={entry.id}
           class="entry-card"
           onClick={() => onEntryClick(entry)}
         >

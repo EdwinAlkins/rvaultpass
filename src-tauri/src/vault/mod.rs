@@ -124,6 +124,9 @@ impl VaultManager {
         let header = VaultHeader::from_bytes(&header_array)?;
         header.verify()?;
 
+        // Bound KDF params BEFORE Argon2 to prevent DoS via malicious headers
+        crypto::validate_kdf_params(header.mem_cost, header.time_cost, header.parallelism)?;
+
         // Derive encryption key first (needed for HMAC verification)
         let password = Secret::new(master_password.to_string());
         let key = derive_key(&password, &header.salt, header.mem_cost, header.time_cost, header.parallelism)?;
@@ -136,14 +139,24 @@ impl VaultManager {
 
         // Extract the database portion (everything after the 96-byte header)
         let db_data = &vault_data[HEADER_SIZE..];
+        if db_data.is_empty() {
+            return Err("Vault file has no database payload".to_string());
+        }
 
         // Write the database to a temporary path for use
         let tmp_path = path.with_extension("vault.tmp.db");
+        if tmp_path.exists() {
+            let _ = std::fs::remove_file(&tmp_path);
+        }
         std::fs::write(&tmp_path, db_data)
             .map_err(|e| format!("Failed to extract database: {}", e))?;
 
-        // Test connection using the temp DB
+        // Unlock + migrate on a single connection path
         db::test_vault_connection(&tmp_path, &key)?;
+        let schema_changed = {
+            let conn = db::init_connection(&tmp_path, &key)?;
+            db::run_migrations(&conn)?
+        };
 
         // Store in global state
         let vault_instance = VaultInstance {
@@ -154,7 +167,17 @@ impl VaultManager {
         };
 
         let mut state = VAULT_STATE.lock().unwrap();
+        // Drop previous session if any (avoid stale temp DB / key)
+        if let Some(prev) = state.take() {
+            let _ = std::fs::remove_file(Path::new(&prev.db_path));
+        }
         *state = Some(vault_instance);
+        drop(state);
+
+        // Persist schema upgrades into the .vault file immediately
+        if schema_changed {
+            VaultManager::save_vault()?;
+        }
 
         Ok(())
     }

@@ -1,0 +1,123 @@
+{
+  "app": {
+    "title": "RVaultPass"
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "add": "Add",
+    "search": "Search...",
+    "close": "Close",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success"
+  },
+  "vault": {
+    "welcome": "Welcome to RVaultPass",
+    "description": "Your local, zero-knowledge password vault",
+    "create": "Create Vault",
+    "open": "Open Vault",
+    "file_path": "Vault File Path",
+    "file_path_placeholder": "/path/to/vault.vault",
+    "browse": "Browse...",
+    "create_title": "Create Vault",
+    "open_title": "Open Vault",
+    "password": "Master Password",
+    "password_placeholder": "Enter your master password",
+    "confirm_password": "Confirm Password",
+    "confirm_password_placeholder": "Confirm your master password",
+    "creating": "Creating vault...",
+    "opening": "Opening vault...",
+    "passwords_mismatch": "Passwords do not match",
+    "empty_password": "Password cannot be empty",
+    "empty_path": "File path cannot be empty"
+  },
+  "sidebar": {
+    "entries": "All Entries",
+    "favorites": "Favorites",
+    "folders": "Folders",
+    "tags": "Tags",
+    "add_folder": "Add Folder",
+    "add_tag": "Add Tag",
+    "new_folder_name": "New Folder",
+    "new_tag_name": "New Tag"
+  },
+  "entry": {
+    "list": {
+      "empty": "No entries yet",
+      "empty_desc": "Create your first password entry"
+    },
+    "add": "Add Entry",
+    "edit": "Edit Entry",
+    "delete_confirm": "Are you sure you want to delete this entry?",
+    "no_password": "No password",
+    "title": "Title",
+    "title_placeholder": "Example: Gmail",
+    "url": "URL",
+    "url_placeholder": "https://example.com",
+    "username": "Username",
+    "username_placeholder": "user@example.com",
+    "username2": "Username 2",
+    "username2_placeholder": "Secondary login / email",
+    "username3": "Username 3",
+    "username3_placeholder": "Additional login field",
+    "password": "Password",
+    "notes": "Notes",
+    "notes_placeholder": "Additional notes...",
+    "totp_secret": "TOTP Secret",
+    "totp_secret_placeholder": "Base32 secret or URI",
+    "folder": "Folder",
+    "tags": "Tags",
+    "is_favorite": "Mark as favorite",
+    "generate_password": "Generate Password",
+    "password_keep_hint": "leave blank to keep",
+    "totp_keep_hint": "leave blank to keep",
+    "reveal": "Reveal",
+    "reveal_notes": "Show notes"
+  },
+  "generator": {
+    "title": "Password Generator",
+    "length": "Length",
+    "uppercase": "Uppercase (A-Z)",
+    "lowercase": "Lowercase (a-z)",
+    "numbers": "Numbers (0-9)",
+    "symbols": "Symbols (!@#$)",
+    "exclude_ambiguous": "Exclude ambiguous (l, 1, O, 0)",
+    "generate": "Generate",
+    "passphrase": "Passphrase",
+    "word_count": "Word Count",
+    "generate_passphrase": "Generate Passphrase"
+  },
+  "totp": {
+    "title": "TOTP Code",
+    "time_remaining": "Refreshes in {{seconds}}s"
+  },
+  "theme": {
+    "dark": "Dark Mode",
+    "light": "Light Mode"
+  },
+  "action": {
+    "lock": "Lock Vault",
+    "save": "Save Vault",
+    "locked": "Vault Locked",
+    "import_dashlane": "Import Dashlane CSV"
+  },
+  "notif": {
+    "entry_created": "Entry created",
+    "entry_updated": "Entry updated",
+    "entry_deleted": "Entry deleted",
+    "folder_created": "Folder created",
+    "tag_created": "Tag created",
+    "vault_saved": "Vault saved",
+    "vault_locked": "Vault locked",
+    "copied_clipboard": "Copied to clipboard",
+    "clipboard_warning": "Warning: clipboard contents will clear in 30s",
+    "import_done": "Imported {{count}} entries from Dashlane",
+    "import_partial": "Imported {{imported}} entries ({{skipped}} skipped)",
+    "import_failed": "Dashlane import failed"
+  }
+}

@@ -3,8 +3,10 @@
 mod crypto;
 mod db;
 mod commands;
+mod import;
 mod models;
 mod vault;
+mod clipboard;
 
 use commands::{
     create_vault, open_vault, lock_vault, save_vault, is_vault_open,
@@ -13,7 +15,9 @@ use commands::{
     create_tag, get_all_tags, delete_tag,
     search_entries,
     generate_password, generate_passphrase,
-    generate_totp,
+    reveal_password, copy_password, copy_entry_field,
+    generate_totp_for_entry, copy_totp, copy_to_clipboard,
+    import_dashlane_csv,
 };
 
 #[tauri::command]
@@ -58,8 +62,15 @@ pub fn run() {
             // Password generator
             generate_password,
             generate_passphrase,
-            // TOTP
-            generate_totp,
+            // Secret access
+            reveal_password,
+            copy_password,
+            copy_entry_field,
+            generate_totp_for_entry,
+            copy_totp,
+            copy_to_clipboard,
+            // Import
+            import_dashlane_csv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

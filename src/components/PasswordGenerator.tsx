@@ -40,10 +40,15 @@ export default function PasswordGenerator({ onClose }: PasswordGeneratorProps) {
     }
   };
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     if (generated) {
-      navigator.clipboard.writeText(generated);
-      addNotification(t('notif.copied_clipboard') + ' — ' + t('notif.clipboard_warning'), 'info');
+      try {
+        await api.copyToClipboard(generated);
+        addNotification(t('notif.copied_clipboard') + ' — ' + t('notif.clipboard_warning'), 'info');
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : 'Error';
+        addNotification(msg, 'error');
+      }
     }
   };
 

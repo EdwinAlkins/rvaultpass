@@ -34,6 +34,37 @@ pub const DEFAULT_TIME_COST: u32 = 3;
 /// Default parallelism (1 thread)
 pub const DEFAULT_PARALLELISM: u32 = 1;
 
+/// Hard bounds for KDF params read from vault headers (DoS protection)
+pub const MIN_MEM_COST: u32 = 8_192;       // 8 MiB
+pub const MAX_MEM_COST: u32 = 1_048_576;   // 1 GiB
+pub const MIN_TIME_COST: u32 = 1;
+pub const MAX_TIME_COST: u32 = 10;
+pub const MIN_PARALLELISM: u32 = 1;
+pub const MAX_PARALLELISM: u32 = 8;
+
+/// Reject malicious / absurd KDF parameters before running Argon2
+pub fn validate_kdf_params(mem_cost: u32, time_cost: u32, parallelism: u32) -> Result<(), String> {
+    if !(MIN_MEM_COST..=MAX_MEM_COST).contains(&mem_cost) {
+        return Err(format!(
+            "Invalid mem_cost {} (allowed {}..={})",
+            mem_cost, MIN_MEM_COST, MAX_MEM_COST
+        ));
+    }
+    if !(MIN_TIME_COST..=MAX_TIME_COST).contains(&time_cost) {
+        return Err(format!(
+            "Invalid time_cost {} (allowed {}..={})",
+            time_cost, MIN_TIME_COST, MAX_TIME_COST
+        ));
+    }
+    if !(MIN_PARALLELISM..=MAX_PARALLELISM).contains(&parallelism) {
+        return Err(format!(
+            "Invalid parallelism {} (allowed {}..={})",
+            parallelism, MIN_PARALLELISM, MAX_PARALLELISM
+        ));
+    }
+    Ok(())
+}
+
 /// Vault header structure
 #[derive(Debug, Clone)]
 pub struct VaultHeader {

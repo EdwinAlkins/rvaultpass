@@ -1,10 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  VaultEntry,
+  EntrySummary,
+  EntryEditData,
   VaultFolder,
   VaultTag,
   PasswordGenerationParams,
   TOTPResult,
+  ImportSummary,
   CommandResult,
 } from '../types';
 
@@ -56,7 +58,7 @@ export async function isVaultOpen(): Promise<boolean> {
 }
 
 // ============================================================================
-// Entry CRUD
+// Entry CRUD (summaries — no secrets in lists)
 // ============================================================================
 
 export async function createEntry(
@@ -64,17 +66,21 @@ export async function createEntry(
   title: string,
   url: string | null,
   username: string | null,
+  username2: string | null,
+  username3: string | null,
   password: string,
   notes: string | null,
   totpSecret: string | null,
   isFavorite: boolean,
   tagIds: string[] | null,
-): Promise<VaultEntry> {
-  const result = await invoke<CommandResult<VaultEntry>>('create_entry', {
+): Promise<EntrySummary> {
+  const result = await invoke<CommandResult<EntrySummary>>('create_entry', {
     folderId,
     title,
     url,
     username,
+    username2,
+    username3,
     password,
     notes,
     totpSecret,
@@ -87,16 +93,16 @@ export async function createEntry(
   return result.data!;
 }
 
-export async function getAllEntries(): Promise<VaultEntry[]> {
-  const result = await invoke<CommandResult<VaultEntry[]>>('get_all_entries');
+export async function getAllEntries(): Promise<EntrySummary[]> {
+  const result = await invoke<CommandResult<EntrySummary[]>>('get_all_entries');
   if (!result.success || result.error) {
     throw new Error(result.error || 'Failed to get entries');
   }
   return result.data ?? [];
 }
 
-export async function getEntry(entryId: string): Promise<VaultEntry> {
-  const result = await invoke<CommandResult<VaultEntry>>('get_entry', { entryId });
+export async function getEntry(entryId: string): Promise<EntryEditData> {
+  const result = await invoke<CommandResult<EntryEditData>>('get_entry', { entryId });
   if (!result.success || result.error) {
     throw new Error(result.error || 'Failed to get entry');
   }
@@ -109,18 +115,22 @@ export async function updateEntry(
   title: string | null,
   url: string | null,
   username: string | null,
+  username2: string | null,
+  username3: string | null,
   password: string | null,
   notes: string | null,
   totpSecret: string | null,
   isFavorite: boolean | null,
   tagIds: string[] | null,
-): Promise<VaultEntry> {
-  const result = await invoke<CommandResult<VaultEntry>>('update_entry', {
+): Promise<EntrySummary> {
+  const result = await invoke<CommandResult<EntrySummary>>('update_entry', {
     entryId,
     folderId,
     title,
     url,
     username,
+    username2,
+    username3,
     password,
     notes,
     totpSecret,
@@ -137,6 +147,54 @@ export async function deleteEntry(entryId: string): Promise<void> {
   const result = await invoke<CommandResult<boolean>>('delete_entry', { entryId });
   if (!result.success || result.error) {
     throw new Error(result.error || 'Failed to delete entry');
+  }
+}
+
+// ============================================================================
+// Secret access (Rust-side only)
+// ============================================================================
+
+export async function revealPassword(entryId: string): Promise<string> {
+  const result = await invoke<CommandResult<string>>('reveal_password', { entryId });
+  if (!result.success || result.error) {
+    throw new Error(result.error || 'Failed to reveal password');
+  }
+  return result.data!;
+}
+
+export async function copyPassword(entryId: string): Promise<void> {
+  const result = await invoke<CommandResult<boolean>>('copy_password', { entryId });
+  if (!result.success || result.error) {
+    throw new Error(result.error || 'Failed to copy password');
+  }
+}
+
+export async function copyEntryField(entryId: string, field: string): Promise<void> {
+  const result = await invoke<CommandResult<boolean>>('copy_entry_field', { entryId, field });
+  if (!result.success || result.error) {
+    throw new Error(result.error || 'Failed to copy field');
+  }
+}
+
+export async function generateTOTPForEntry(entryId: string): Promise<TOTPResult> {
+  const result = await invoke<CommandResult<TOTPResult>>('generate_totp_for_entry', { entryId });
+  if (!result.success || result.error) {
+    throw new Error(result.error || 'Failed to generate TOTP');
+  }
+  return result.data!;
+}
+
+export async function copyTOTP(entryId: string): Promise<void> {
+  const result = await invoke<CommandResult<boolean>>('copy_totp', { entryId });
+  if (!result.success || result.error) {
+    throw new Error(result.error || 'Failed to copy TOTP');
+  }
+}
+
+export async function copyToClipboard(text: string): Promise<void> {
+  const result = await invoke<CommandResult<boolean>>('copy_to_clipboard', { text });
+  if (!result.success || result.error) {
+    throw new Error(result.error || 'Failed to copy to clipboard');
   }
 }
 
@@ -217,8 +275,8 @@ export async function deleteTag(tagId: string): Promise<void> {
 // Search
 // ============================================================================
 
-export async function searchEntries(query: string): Promise<VaultEntry[]> {
-  const result = await invoke<CommandResult<VaultEntry[]>>('search_entries', { query });
+export async function searchEntries(query: string): Promise<EntrySummary[]> {
+  const result = await invoke<CommandResult<EntrySummary[]>>('search_entries', { query });
   if (!result.success || result.error) {
     throw new Error(result.error || 'Failed to search entries');
   }
@@ -246,13 +304,13 @@ export async function generatePassphrase(wordCount: number): Promise<string> {
 }
 
 // ============================================================================
-// TOTP
+// Import
 // ============================================================================
 
-export async function generateTOTP(secret: string): Promise<TOTPResult> {
-  const result = await invoke<CommandResult<TOTPResult>>('generate_totp', { secret });
+export async function importDashlaneCsv(path: string): Promise<ImportSummary> {
+  const result = await invoke<CommandResult<ImportSummary>>('import_dashlane_csv', { path });
   if (!result.success || result.error) {
-    throw new Error(result.error || 'Failed to generate TOTP');
+    throw new Error(result.error || 'Failed to import Dashlane CSV');
   }
   return result.data!;
 }

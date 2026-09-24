@@ -2,11 +2,11 @@ import { useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../stores/app';
 import * as api from '../api';
-import type { VaultEntry, VaultTag } from '../types';
+import type { EntryEditData, VaultTag } from '../types';
 import './EntryForm.css';
 
 interface EntryFormProps {
-  entry: VaultEntry | null;
+  entry: EntryEditData | null;
   folders: { id: string; name: string }[];
   allTags: VaultTag[];
   onClose: () => void;
@@ -20,9 +20,11 @@ export default function EntryForm({ entry, folders, allTags, onClose, onSaved }:
   const [title, setTitle] = useState(entry?.title ?? '');
   const [url, setUrl] = useState(entry?.url ?? '');
   const [username, setUsername] = useState(entry?.username ?? '');
+  const [username2, setUsername2] = useState(entry?.username2 ?? '');
+  const [username3, setUsername3] = useState(entry?.username3 ?? '');
   const [password, setPassword] = useState('');
   const [notes, setNotes] = useState(entry?.notes ?? '');
-  const [totpSecret, setTotpSecret] = useState(entry?.totp_secret ?? '');
+  const [totpSecret, setTotpSecret] = useState('');
   const [folderId, setFolderId] = useState(entry?.folder_id ?? '');
   const [isFavorite, setIsFavorite] = useState(entry?.is_favorite ?? false);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>(
@@ -48,9 +50,11 @@ export default function EntryForm({ entry, folders, allTags, onClose, onSaved }:
           title.trim(),
           url.trim() || null,
           username.trim() || null,
-          password || null,
+          username2.trim() || null,
+          username3.trim() || null,
+          password || null, // empty = keep existing
           notes.trim() || null,
-          totpSecret.trim() || null,
+          totpSecret.trim() || null, // empty = keep existing
           isFavorite,
           selectedTagIds.length > 0 ? selectedTagIds : null,
         );
@@ -61,6 +65,8 @@ export default function EntryForm({ entry, folders, allTags, onClose, onSaved }:
           title.trim(),
           url.trim() || null,
           username.trim() || null,
+          username2.trim() || null,
+          username3.trim() || null,
           password,
           notes.trim() || null,
           totpSecret.trim() || null,
@@ -69,6 +75,7 @@ export default function EntryForm({ entry, folders, allTags, onClose, onSaved }:
         );
         addNotification(t('notif.entry_created'), 'success');
       }
+      await api.saveVault();
       onSaved();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Error';
@@ -76,11 +83,6 @@ export default function EntryForm({ entry, folders, allTags, onClose, onSaved }:
     } finally {
       setSaving(false);
     }
-  };
-
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
-    addNotification(t('notif.copied_clipboard'), 'info');
   };
 
   return (
@@ -123,22 +125,40 @@ export default function EntryForm({ entry, folders, allTags, onClose, onSaved }:
           </div>
 
           <div class="form-group">
-            <label>{t('entry.password')}</label>
+            <label>{t('entry.username2')}</label>
+            <input
+              type="text"
+              value={username2}
+              onInput={(e) => setUsername2(e.currentTarget.value)}
+              placeholder={t('entry.username2_placeholder')}
+            />
+          </div>
+
+          <div class="form-group">
+            <label>{t('entry.username3')}</label>
+            <input
+              type="text"
+              value={username3}
+              onInput={(e) => setUsername3(e.currentTarget.value)}
+              placeholder={t('entry.username3_placeholder')}
+            />
+          </div>
+
+          <div class="form-group">
+            <label>
+              {t('entry.password')}
+              {entry?.has_password ? ` (${t('entry.password_keep_hint')})` : ''}
+            </label>
             <div class="password-field">
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onInput={(e) => setPassword(e.currentTarget.value)}
-                placeholder="••••••••"
+                placeholder={entry?.has_password ? '••••••••' : ''}
               />
               <button class="toggle-vis" onClick={() => setShowPassword(!showPassword)}>
                 {showPassword ? '🙈' : '👁'}
               </button>
-              {password && (
-                <button class="copy-field" onClick={() => handleCopy(password)}>
-                  {t('common.copy')}
-                </button>
-              )}
             </div>
           </div>
 
@@ -153,7 +173,10 @@ export default function EntryForm({ entry, folders, allTags, onClose, onSaved }:
           </div>
 
           <div class="form-group">
-            <label>{t('entry.totp_secret')}</label>
+            <label>
+              {t('entry.totp_secret')}
+              {entry?.has_totp ? ` (${t('entry.totp_keep_hint')})` : ''}
+            </label>
             <input
               type="text"
               value={totpSecret}
