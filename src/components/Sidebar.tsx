@@ -76,6 +76,7 @@ export default function Sidebar() {
           </svg>
           {t('sidebar.favorites')}
         </button>
+
       </nav>
 
       {/* Folders */}

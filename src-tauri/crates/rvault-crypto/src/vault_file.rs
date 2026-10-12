@@ -16,8 +16,17 @@ type HmacSha256 = Hmac<Sha256>;
 /// Magic bytes for vault file format
 pub const VAULT_MAGIC: [u8; 4] = *b"KVLT";
 
-/// Current vault format version
-pub const VAULT_VERSION: u8 = 0x01;
+/// Vault format that uses the Argon2id output for every key.
+pub const VAULT_VERSION_V1: u8 = 0x01;
+
+/// Vault format that splits the Argon2id output into distinct keys.
+pub const VAULT_VERSION_V2: u8 = 0x02;
+
+/// Format written by newly created vaults.
+pub const VAULT_VERSION: u8 = VAULT_VERSION_V2;
+
+/// Minimum master-password length. No character-class rules.
+pub const MIN_MASTER_PASSWORD_LEN: usize = 8;
 
 /// Header size in bytes (96 bytes)
 pub const HEADER_SIZE: usize = 96;
@@ -109,7 +118,7 @@ impl VaultHeader {
         if self.magic != VAULT_MAGIC {
             return Err("Invalid vault magic bytes".to_string());
         }
-        if self.version != VAULT_VERSION {
+        if self.version != VAULT_VERSION_V1 && self.version != VAULT_VERSION_V2 {
             return Err(format!("Unsupported vault version: {}", self.version));
         }
         Ok(())
@@ -144,6 +153,57 @@ pub fn compute_header_hmac(header_data: &[u8], key: &Secret<Vec<u8>>) -> [u8; 32
     output
 }
 
+/// Compare two byte strings without short-circuiting on the first difference.
+pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut difference = 0u8;
+    for (left, right) in left.iter().zip(right) {
+        difference |= left ^ right;
+    }
+    difference == 0
+}
+
+/// Reject a master password that is too short. Checked when a vault is created.
+pub fn validate_master_password(password: &str) -> Result<(), String> {
+    if password.chars().count() < MIN_MASTER_PASSWORD_LEN {
+        return Err(format!(
+            "Master password must be at least {MIN_MASTER_PASSWORD_LEN} characters"
+        ));
+    }
+    Ok(())
+}
+
+/// Distinct keys derived from one Argon2id output. Used by format version 2.
+pub struct SplitKeys {
+    pub sqlcipher: Secret<Vec<u8>>,
+    pub kek: Secret<Vec<u8>>,
+}
+
+/// Split a master key into a SQLCipher key and a wrapping key.
+pub fn split_master_key(master: &Secret<Vec<u8>>) -> Result<SplitKeys, String> {
+    let sqlcipher = hkdf_sha256(master.expose_secret(), b"rvaultpass-sqlcipher-v2");
+    let kek = hkdf_sha256(master.expose_secret(), b"rvaultpass-kek-v2");
+    Ok(SplitKeys {
+        sqlcipher: Secret::new(sqlcipher.to_vec()),
+        kek: Secret::new(kek.to_vec()),
+    })
+}
+
+fn hkdf_sha256(ikm: &[u8], info: &[u8]) -> [u8; 32] {
+    let mut extract = HmacSha256::new_from_slice(&[0u8; 32]).expect("HMAC accepts a 32-byte key");
+    extract.update(ikm);
+    let prk = extract.finalize().into_bytes();
+    let mut expand = HmacSha256::new_from_slice(&prk).expect("HMAC accepts a 32-byte key");
+    expand.update(info);
+    expand.update(&[1]);
+    let okm = expand.finalize().into_bytes();
+    let mut output = [0u8; 32];
+    output.copy_from_slice(&okm);
+    output
+}
+
 /// Derive encryption key from password using Argon2id
 pub fn derive_key(
     password: &Secret<String>,
@@ -170,7 +230,7 @@ pub fn derive_key(
             salt,
             &mut key,
         )
-        .map_err(|e| format!("Argon2 error: {}", e))?;
+        .map_err(|_| "Key derivation failed".to_string())?;
 
     let secret_key = Secret::new(key.clone());
     key.zeroize(); // Clear temporary buffer

@@ -76,6 +76,8 @@
     "generate_password": "Generate Password",
     "password_keep_hint": "leave blank to keep",
     "totp_keep_hint": "leave blank to keep",
+    "totp_clear": "Remove TOTP secret",
+    "totp_clear_pending": "TOTP secret will be removed",
     "reveal": "Reveal",
     "reveal_notes": "Show notes"
   },

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from './stores/app';
 import type { EntrySummary } from './types';
 import * as api from './api';
+import { revealStillCurrent } from './requestGuard';
 
 import VaultScreen from './components/VaultScreen';
 import Sidebar from './components/Sidebar';
@@ -13,7 +14,6 @@ import EntryForm from './components/EntryForm';
 import PasswordGenerator from './components/PasswordGenerator';
 import Notifications from './components/Notifications';
 import TOTPDisplay from './components/TOTPDisplay';
-
 import './App.css';
 
 function App() {
@@ -30,6 +30,15 @@ function App() {
 
   const [revealedPassword, setRevealedPassword] = useState<string | null>(null);
   const [revealedNotes, setRevealedNotes] = useState<string | null>(null);
+  const revealTimer = useRef<number | null>(null);
+  const selectedIdRef = useRef(selectedEntryId);
+  selectedIdRef.current = selectedEntryId;
+
+  useEffect(() => {
+    return () => {
+      if (revealTimer.current !== null) window.clearTimeout(revealTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (i18n.language !== language) {
@@ -45,6 +54,7 @@ function App() {
   useEffect(() => {
     setRevealedPassword(null);
     setRevealedNotes(null);
+    if (revealTimer.current !== null) window.clearTimeout(revealTimer.current);
   }, [selectedEntryId]);
 
   const filteredEntries = useMemo(() => {
@@ -80,11 +90,13 @@ function App() {
 
   const handleRevealPassword = async () => {
     if (!selectedEntry) return;
+    const requestedId = selectedEntry.id;
     try {
-      const pw = await api.revealPassword(selectedEntry.id);
+      const pw = await api.revealPassword(requestedId);
+      if (!revealStillCurrent(requestedId, selectedIdRef.current)) return;
       setRevealedPassword(pw);
-      // Auto-hide after 15s
-      setTimeout(() => setRevealedPassword(null), 15000);
+      if (revealTimer.current !== null) window.clearTimeout(revealTimer.current);
+      revealTimer.current = window.setTimeout(() => setRevealedPassword(null), 15000);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Error';
       useAppStore.getState().addNotification(msg, 'error');
@@ -135,8 +147,11 @@ function App() {
         <SearchBar />
 
         <div class="content-area">
-          <EntryList entries={filteredEntries} onEntryClick={handleEntryClick} />
-        </div>
+          <EntryList
+            entries={filteredEntries}
+            selectedId={selectedEntryId}
+            onEntryClick={handleEntryClick}
+          />
 
         {selectedEntry && (
           <div class="detail-panel">
@@ -226,6 +241,7 @@ function App() {
             </div>
           </div>
         )}
+        </div>
       </div>
 
       {showEntryForm && (

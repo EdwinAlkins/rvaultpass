@@ -1,4 +1,7 @@
 📘 CAHIER DES CHARGES v1.0
+
+> Document historique. L’architecture actuelle (bureau, service HTTP, client web et extension) est décrite dans `docs/v2/`. Ce cahier décrit la cible initiale : un coffre local sans serveur.
+
 Gestionnaire de Mots de Passe Local (Modèle Fichier Unique)
 Stack : Tauri v2 (Rust + preact) | rusqlite + SQLCipher | Open Source
 1. 🎯 Vision & Objectifs

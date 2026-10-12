@@ -1,8 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod crypto;
-mod db;
 mod commands;
+mod db;
 mod import;
 mod models;
 mod vault;
@@ -10,6 +9,7 @@ mod clipboard;
 
 use commands::{
     create_vault, open_vault, lock_vault, save_vault, is_vault_open,
+    set_lock_preferences,
     create_entry, get_all_entries, get_entry, update_entry, delete_entry,
     create_folder, get_all_folders, update_folder, delete_folder,
     create_tag, get_all_tags, delete_tag,
@@ -31,6 +31,15 @@ pub fn run() {
         .with_max_level(tracing::Level::INFO)
         .init();
 
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            if let Err(error) = vault::VaultManager::lock_if_idle() {
+                tracing::error!("Automatic lock failed: {error}");
+            }
+        }
+    });
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -42,6 +51,7 @@ pub fn run() {
             lock_vault,
             save_vault,
             is_vault_open,
+            set_lock_preferences,
             // Entry CRUD
             create_entry,
             get_all_entries,
@@ -72,6 +82,15 @@ pub fn run() {
             // Import
             import_dashlane_csv,
         ])
+        .on_window_event(|_window, event| {
+            if let tauri::WindowEvent::Focused(false) = event {
+                if vault::VaultManager::lock_on_blur_enabled() {
+                    if let Err(error) = vault::VaultManager::lock_vault() {
+                        tracing::error!("Lock on blur failed: {error}");
+                    }
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

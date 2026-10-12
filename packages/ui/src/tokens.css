@@ -1,0 +1,20 @@
+:root {
+  color-scheme: light;
+  --rv-bg: #f3f5f7;
+  --rv-surface: #ffffff;
+  --rv-text: #1b1e23;
+  --rv-muted: #6b7280;
+  --rv-line: #e6e8ec;
+  --rv-hover: #f0f3f6;
+  --rv-accent: #0c7a62;
+  --rv-accent-dark: #096350;
+  --rv-accent-soft: #e7f5f1;
+  --rv-danger: #c24141;
+  --rv-danger-soft: #fbeaea;
+  --rv-warning: #b7791f;
+  --rv-radius-sm: 8px;
+  --rv-radius: 10px;
+  --rv-radius-lg: 16px;
+  --rv-font: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+  --rv-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

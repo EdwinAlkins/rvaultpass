@@ -1,0 +1,19 @@
+{
+  "name": "rvault-extension",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build && vite build --mode background && vite build --mode content",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rvaultpass/ui": "*",
+    "@rvaultpass/vault-client": "*",
+    "preact": "^10.25.1"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.9.3",
+    "@types/chrome": "^0.3.5",
+    "vite": "^6.0.3"
+  }
+}

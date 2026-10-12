@@ -76,6 +76,8 @@
     "generate_password": "Générer mot de passe",
     "password_keep_hint": "laisser vide pour conserver",
     "totp_keep_hint": "laisser vide pour conserver",
+    "totp_clear": "Effacer le secret TOTP",
+    "totp_clear_pending": "Le secret TOTP sera effacé",
     "reveal": "Afficher",
     "reveal_notes": "Afficher les notes"
   },

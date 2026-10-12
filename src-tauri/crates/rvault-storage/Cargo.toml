@@ -1,0 +1,25 @@
+[package]
+name = "rvault-storage"
+version = "0.1.0"
+description = "Local SQLCipher cache for a vault"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+rvault-core = { path = "../rvault-core" }
+rvault-crypto = { path = "../rvault-crypto" }
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher", "modern_sqlite", "backup"] }
+fs4 = "0.12"
+libc = "0.2"
+secrecy = "0.8"
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+ring = "0.17"
+hmac = "0.12"
+sha1 = "0.10"
+sha2 = "0.10"
+once_cell = "1"
+tracing = "0.1"
+
+[dev-dependencies]

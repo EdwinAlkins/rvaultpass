@@ -25,22 +25,48 @@
 }
 
 .entry-list {
+  flex: 1;
+  min-width: 0;
   padding: 0.5rem;
   overflow-y: auto;
   height: 100%;
 }
 
 .entry-card {
-  padding: 0.875rem 1rem;
-  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 12px;
   cursor: pointer;
   transition: background 0.15s;
   border: 1px solid transparent;
 }
 
-.entry-card:hover {
+.entry-card:hover,
+.entry-card.is-selected {
   background: var(--bg-hover);
-  border-color: var(--border-color);
+}
+
+.entry-card.is-selected {
+  background: var(--bg-active);
+}
+
+.entry-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: white;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.entry-body {
+  min-width: 0;
+  flex: 1;
 }
 
 .entry-header {
@@ -76,7 +102,7 @@
 }
 
 .entry-url {
-  color: var(--accent);
+  color: var(--text-secondary);
 }
 
 .entry-footer {

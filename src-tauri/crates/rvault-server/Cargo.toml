@@ -1,0 +1,26 @@
+[package]
+name = "rvault-server"
+version = "0.1.0"
+description = "Headless REST service for one .vault file"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+axum = "0.8"
+base64 = "0.22"
+rand = "0.8"
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher", "modern_sqlite"] }
+rvault-application = { path = "../rvault-application" }
+rvault-core = { path = "../rvault-core" }
+rvault-storage = { path = "../rvault-storage" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
+tower-http = { version = "0.6", features = ["cors"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

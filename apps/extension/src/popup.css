@@ -1,0 +1,6 @@
+html, body, #app {
+  width: 380px;
+  height: 560px;
+  margin: 0;
+  overflow: hidden;
+}

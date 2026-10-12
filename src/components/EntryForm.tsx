@@ -23,6 +23,7 @@ export default function EntryForm({ entry, folders, allTags, onClose, onSaved }:
   const [username2, setUsername2] = useState(entry?.username2 ?? '');
   const [username3, setUsername3] = useState(entry?.username3 ?? '');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [notes, setNotes] = useState(entry?.notes ?? '');
   const [totpSecret, setTotpSecret] = useState('');
   const [folderId, setFolderId] = useState(entry?.folder_id ?? '');
@@ -30,7 +31,7 @@ export default function EntryForm({ entry, folders, allTags, onClose, onSaved }:
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>(
     entry?.tags?.map((tag) => tag.id) ?? []
   );
-  const [showPassword, setShowPassword] = useState(false);
+  const [clearTotp, setClearTotp] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const toggleTag = (tagId: string) => {
@@ -54,9 +55,9 @@ export default function EntryForm({ entry, folders, allTags, onClose, onSaved }:
           username3.trim() || null,
           password || null, // empty = keep existing
           notes.trim() || null,
-          totpSecret.trim() || null, // empty = keep existing
+          clearTotp ? '' : (totpSecret.trim() || null),
           isFavorite,
-          selectedTagIds.length > 0 ? selectedTagIds : null,
+          selectedTagIds,
         );
         addNotification(t('notif.entry_updated'), 'success');
       } else {
@@ -71,12 +72,11 @@ export default function EntryForm({ entry, folders, allTags, onClose, onSaved }:
           notes.trim() || null,
           totpSecret.trim() || null,
           isFavorite,
-          selectedTagIds.length > 0 ? selectedTagIds : null,
+          selectedTagIds,
         );
         addNotification(t('notif.entry_created'), 'success');
       }
-      await api.saveVault();
-      onSaved();
+      await onSaved();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Error';
       addNotification(msg, 'error');
@@ -180,9 +180,17 @@ export default function EntryForm({ entry, folders, allTags, onClose, onSaved }:
             <input
               type="text"
               value={totpSecret}
-              onInput={(e) => setTotpSecret(e.currentTarget.value)}
+              onInput={(e) => {
+                setTotpSecret(e.currentTarget.value);
+                setClearTotp(false);
+              }}
               placeholder={t('entry.totp_secret_placeholder')}
             />
+            {entry?.has_totp && (
+              <button type="button" class="btn-secondary" onClick={() => setClearTotp((value) => !value)}>
+                {clearTotp ? t('entry.totp_clear_pending') : t('entry.totp_clear')}
+              </button>
+            )}
           </div>
 
           <div class="form-group">

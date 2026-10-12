@@ -1,10 +1,9 @@
 .search-bar {
-  padding: 0.75rem 1rem;
+  padding: 0.75rem 1rem 0.25rem;
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
+  background: transparent;
 }
 
 .search-icon {
@@ -14,9 +13,9 @@
 
 .search-input {
   flex: 1;
-  padding: 0.5rem 0.75rem;
-  border-radius: 8px;
-  border: 1px solid var(--border-color);
+  padding: 0.7rem 0.85rem;
+  border-radius: 12px;
+  border: 0;
   background: var(--bg-tertiary);
   color: var(--text-primary);
   font-size: 0.875rem;
@@ -27,7 +26,6 @@
 }
 
 .search-input:focus {
-  border-color: var(--accent);
   background: var(--bg-primary);
 }
 

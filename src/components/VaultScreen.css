@@ -44,10 +44,14 @@
 }
 
 .welcome-screen .vault-icon {
-  width: 96px;
-  height: 96px;
-  margin: 0 auto 1.5rem;
-  color: var(--accent);
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 1.25rem;
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--accent);
+  color: white;
+  box-sizing: border-box;
 }
 
 .welcome-screen h1 {
@@ -108,7 +112,7 @@
   background: var(--bg-secondary);
   border-radius: 16px;
   padding: 2rem;
-  border: 1px solid var(--border-color);
+  box-shadow: 0 8px 30px rgba(27, 30, 35, 0.08);
 }
 
 .back-btn {

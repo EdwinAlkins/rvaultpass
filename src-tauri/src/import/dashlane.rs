@@ -10,7 +10,6 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::db::operations;
-use crate::vault::VaultManager;
 
 /// Result of a Dashlane CSV import run
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,54 +130,42 @@ pub fn parse_credentials_csv(content: &str) -> Result<Vec<DashlaneCredential>, S
 }
 
 /// Import a Dashlane credentials.csv file into the currently open vault.
-pub fn import_dashlane_csv(path: &Path) -> Result<ImportSummary, String> {
-    if !VaultManager::is_vault_open() {
-        return Err("Vault is not open".to_string());
-    }
-
+/// The caller supplies the transaction. Any row failure aborts the whole import.
+pub fn import_dashlane_csv(conn: &rusqlite::Connection, path: &Path) -> Result<ImportSummary, String> {
     let content = fs::read_to_string(path)
         .map_err(|e| format!("Failed to read CSV file: {}", e))?;
 
     let credentials = parse_credentials_csv(&content)?;
 
     let mut folder_cache: HashMap<String, String> = HashMap::new();
-    if let Ok(existing) = operations::get_all_folders() {
+    if let Ok(existing) = operations::list_folders(conn) {
         for folder in existing {
             folder_cache.insert(folder.name.clone(), folder.id);
         }
     }
 
     let mut imported: u32 = 0;
-    let mut skipped: u32 = 0;
-    let mut errors: Vec<String> = Vec::new();
+    let errors: Vec<String> = Vec::new();
 
     for (i, cred) in credentials.iter().enumerate() {
-        let row_num = i + 2; // 1-based data row (header is row 1)
+        let row_num = i + 2;
 
         let folder_id = if let Some(ref cat) = cred.category {
             if let Some(id) = folder_cache.get(cat) {
                 Some(id.clone())
             } else {
-                match operations::create_folder(cat.clone(), None) {
-                    Ok(folder) => {
-                        folder_cache.insert(cat.clone(), folder.id.clone());
-                        Some(folder.id)
-                    }
-                    Err(e) => {
-                        errors.push(format!(
-                            "Row {}: failed to create folder '{}': {}",
-                            row_num, cat, e
-                        ));
-                        skipped += 1;
-                        continue;
-                    }
-                }
+                let folder = operations::create_folder(conn, cat.clone(), None).map_err(|e| {
+                    format!("Row {row_num}: failed to create folder '{cat}': {e}")
+                })?;
+                folder_cache.insert(cat.clone(), folder.id.clone());
+                Some(folder.id)
             }
         } else {
             None
         };
 
-        match operations::create_entry(
+        operations::create_entry(
+            conn,
             folder_id,
             cred.title.clone(),
             cred.url.clone(),
@@ -190,21 +177,14 @@ pub fn import_dashlane_csv(path: &Path) -> Result<ImportSummary, String> {
             cred.totp_secret.clone(),
             false,
             None,
-        ) {
-            Ok(_) => imported += 1,
-            Err(e) => {
-                errors.push(format!(
-                    "Row {}: failed to create entry '{}': {}",
-                    row_num, cred.title, e
-                ));
-                skipped += 1;
-            }
-        }
+        )
+        .map_err(|e| format!("Row {row_num}: failed to create entry '{}': {e}", cred.title))?;
+        imported += 1;
     }
 
     Ok(ImportSummary {
         imported,
-        skipped,
+        skipped: 0,
         errors,
     })
 }

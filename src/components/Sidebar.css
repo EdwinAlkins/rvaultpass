@@ -20,7 +20,11 @@
 .logo-icon {
   width: 28px;
   height: 28px;
-  color: var(--accent);
+  padding: 5px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: white;
+  box-sizing: border-box;
 }
 
 .app-name {
@@ -55,6 +59,7 @@
 .nav-item.active {
   background: var(--bg-active);
   color: var(--accent);
+  font-weight: 600;
 }
 
 .nav-icon {

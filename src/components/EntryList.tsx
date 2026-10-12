@@ -5,10 +5,19 @@ import './EntryList.css';
 
 interface EntryListProps {
   entries: EntrySummary[];
+  selectedId?: string | null;
   onEntryClick: (entry: EntrySummary) => void;
 }
 
-export default function EntryList({ entries, onEntryClick }: EntryListProps) {
+const AVATAR_COLORS = ['#0c7a62', '#1d6f8a', '#3d6b4f', '#8a5a2b', '#5c4d8a', '#8a3d55'];
+
+function avatarColor(title: string) {
+  const letter = title.trim().charAt(0) || '?';
+  const index = [...letter].reduce((sum, char) => sum + char.charCodeAt(0), 0) % AVATAR_COLORS.length;
+  return AVATAR_COLORS[index];
+}
+
+export default function EntryList({ entries, selectedId, onEntryClick }: EntryListProps) {
   const { t } = useTranslation();
   const { darkMode } = useAppStore();
 
@@ -32,9 +41,13 @@ export default function EntryList({ entries, onEntryClick }: EntryListProps) {
       {entries.map((entry) => (
         <div
           key={entry.id}
-          class="entry-card"
+          class={`entry-card${entry.id === selectedId ? ' is-selected' : ''}`}
           onClick={() => onEntryClick(entry)}
         >
+          <span class="entry-avatar" style={{ background: avatarColor(entry.title || '?') }}>
+            {(entry.title || '?').trim().charAt(0).toUpperCase() || '?'}
+          </span>
+          <div class="entry-body">
           <div class="entry-header">
             <h3 class="entry-title">{entry.title || 'Untitled'}</h3>
             {entry.is_favorite && (
@@ -55,6 +68,7 @@ export default function EntryList({ entries, onEntryClick }: EntryListProps) {
                 <span class="entry-tag" key={tag.id}>{tag.name}</span>
               ))}
             </div>
+          </div>
           </div>
         </div>
       ))}

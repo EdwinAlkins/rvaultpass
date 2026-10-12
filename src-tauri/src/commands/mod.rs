@@ -4,14 +4,13 @@
 //! All validation and security checks happen here
 
 use serde::{Deserialize, Serialize};
-use crate::vault::VaultManager;
-use crate::db::operations;
+use crate::clipboard;
 use crate::import::{self, ImportSummary};
 use crate::models::{
-    VaultFolder, VaultTag, PasswordGenerationParams, TOTPResult,
-    EntrySummary, EntryEditData,
+    EntryEditData, EntryPatch, EntrySummary, PasswordGenerationParams, TOTPResult, VaultFolder,
+    VaultTag,
 };
-use crate::clipboard;
+use crate::vault::VaultManager;
 
 /// Response wrapper for all commands
 #[derive(Debug, Serialize, Deserialize)]
@@ -88,11 +87,6 @@ pub async fn open_vault(
 pub async fn lock_vault() -> CommandResult<bool> {
     tracing::info!("Locking vault");
 
-    // Persist working DB before destroying the session
-    if let Err(e) = VaultManager::save_vault() {
-        tracing::warn!("Save before lock failed (continuing lock): {}", e);
-    }
-
     clipboard::clear_pending();
 
     match VaultManager::lock_vault() {
@@ -130,6 +124,13 @@ pub async fn is_vault_open() -> CommandResult<bool> {
     CommandResult::ok(VaultManager::is_vault_open())
 }
 
+/// Idle lock in seconds. Zero disables the idle lock.
+#[tauri::command]
+pub async fn set_lock_preferences(idle_secs: i64, lock_on_blur: bool) -> CommandResult<bool> {
+    VaultManager::set_lock_preferences(idle_secs, lock_on_blur);
+    CommandResult::ok(true)
+}
+
 // ============================================================================
 // Entry CRUD Commands
 // ============================================================================
@@ -151,7 +152,7 @@ pub async fn create_entry(
 ) -> CommandResult<EntrySummary> {
     tracing::info!("Creating entry: {}", title);
 
-    match operations::create_entry(
+    match VaultManager::create_entry(
         folder_id,
         title,
         url,
@@ -166,7 +167,7 @@ pub async fn create_entry(
     ) {
         Ok(entry) => {
             tracing::info!("Entry created: {}", entry.id);
-            CommandResult::ok(entry.to_summary())
+            CommandResult::ok(entry)
         }
         Err(e) => {
             tracing::error!("Failed to create entry: {}", e);
@@ -178,8 +179,8 @@ pub async fn create_entry(
 /// Get all entries (summaries only — no secrets)
 #[tauri::command]
 pub async fn get_all_entries() -> CommandResult<Vec<EntrySummary>> {
-    match operations::get_all_entries() {
-        Ok(entries) => CommandResult::ok(entries.into_iter().map(|e| e.to_summary()).collect()),
+    match VaultManager::list_entries() {
+        Ok(entries) => CommandResult::ok(entries),
         Err(e) => {
             tracing::error!("Failed to get entries: {}", e);
             CommandResult::err(e)
@@ -190,8 +191,8 @@ pub async fn get_all_entries() -> CommandResult<Vec<EntrySummary>> {
 /// Get editable metadata for an entry (no password / TOTP secret)
 #[tauri::command]
 pub async fn get_entry(entry_id: String) -> CommandResult<EntryEditData> {
-    match operations::get_entry(&entry_id) {
-        Ok(entry) => CommandResult::ok(entry.to_edit_data()),
+    match VaultManager::edit_entry(&entry_id) {
+        Ok(entry) => CommandResult::ok(entry),
         Err(e) => {
             tracing::error!("Failed to get entry: {}", e);
             CommandResult::err(e)
@@ -217,39 +218,30 @@ pub async fn update_entry(
     ) -> CommandResult<EntrySummary> {
     tracing::info!("Updating entry: {}", entry_id);
 
-    // Fetch existing entry to get current values
-    let existing = match operations::get_entry(&entry_id) {
-        Ok(e) => e,
-        Err(e) => {
-            tracing::error!("Failed to get existing entry: {}", e);
-            return CommandResult::err(e);
-        }
-    };
-
-    // Empty password / totp from UI means "keep existing"
-    let password = password.filter(|p| !p.is_empty());
+    let password = password.filter(|value| !value.is_empty());
     let totp_secret = match totp_secret {
-        Some(s) if s.is_empty() => existing.totp_secret.clone(),
-        other => other.or(existing.totp_secret.clone()),
+        Some(value) if value.is_empty() => Some(None),
+        Some(value) => Some(Some(value)),
+        None => None,
     };
-
-    match operations::update_entry(
-        entry_id,
-        folder_id.or(existing.folder_id),
-        title.unwrap_or(existing.title),
-        url.or(existing.url),
-        username.or(existing.username),
-        username2.or(existing.username2),
-        username3.or(existing.username3),
+    let patch = EntryPatch {
+        folder_id: Some(folder_id),
+        title,
+        url: Some(url),
+        username: Some(username),
+        username2: Some(username2),
+        username3: Some(username3),
         password,
-        notes.or(existing.notes),
+        notes: Some(notes),
         totp_secret,
         is_favorite,
         tag_ids,
-    ) {
+    };
+
+    match VaultManager::update_entry(entry_id, patch) {
         Ok(entry) => {
             tracing::info!("Entry updated: {}", entry.id);
-            CommandResult::ok(entry.to_summary())
+            CommandResult::ok(entry)
         }
         Err(e) => {
             tracing::error!("Failed to update entry: {}", e);
@@ -263,7 +255,7 @@ pub async fn update_entry(
 pub async fn delete_entry(entry_id: String) -> CommandResult<bool> {
     tracing::info!("Deleting entry: {}", entry_id);
 
-    match operations::delete_entry(&entry_id) {
+    match VaultManager::delete_entry(&entry_id) {
         Ok(_) => {
             tracing::info!("Entry deleted");
             CommandResult::ok(true)
@@ -284,7 +276,7 @@ pub async fn delete_entry(entry_id: String) -> CommandResult<bool> {
 pub async fn create_folder(name: String, parent_id: Option<String>) -> CommandResult<VaultFolder> {
     tracing::info!("Creating folder: {}", name);
 
-    match operations::create_folder(name, parent_id) {
+    match VaultManager::create_folder(name, parent_id) {
         Ok(folder) => {
             tracing::info!("Folder created: {}", folder.id);
             CommandResult::ok(folder)
@@ -299,7 +291,7 @@ pub async fn create_folder(name: String, parent_id: Option<String>) -> CommandRe
 /// Get all folders
 #[tauri::command]
 pub async fn get_all_folders() -> CommandResult<Vec<VaultFolder>> {
-    match operations::get_all_folders() {
+    match VaultManager::list_folders() {
         Ok(folders) => CommandResult::ok(folders),
         Err(e) => {
             tracing::error!("Failed to get folders: {}", e);
@@ -317,7 +309,7 @@ pub async fn update_folder(
 ) -> CommandResult<VaultFolder> {
     tracing::info!("Updating folder: {}", folder_id);
 
-    match operations::update_folder(&folder_id, name, parent_id) {
+    match VaultManager::update_folder(&folder_id, name, parent_id) {
         Ok(folder) => {
             tracing::info!("Folder updated: {}", folder.id);
             CommandResult::ok(folder)
@@ -334,7 +326,7 @@ pub async fn update_folder(
 pub async fn delete_folder(folder_id: String) -> CommandResult<bool> {
     tracing::info!("Deleting folder: {}", folder_id);
 
-    match operations::delete_folder(&folder_id) {
+    match VaultManager::delete_folder(&folder_id) {
         Ok(_) => {
             tracing::info!("Folder deleted");
             CommandResult::ok(true)
@@ -355,7 +347,7 @@ pub async fn delete_folder(folder_id: String) -> CommandResult<bool> {
 pub async fn create_tag(name: String) -> CommandResult<VaultTag> {
     tracing::info!("Creating tag: {}", name);
 
-    match operations::create_tag(name) {
+    match VaultManager::create_tag(name) {
         Ok(tag) => {
             tracing::info!("Tag created: {}", tag.id);
             CommandResult::ok(tag)
@@ -370,7 +362,7 @@ pub async fn create_tag(name: String) -> CommandResult<VaultTag> {
 /// Get all tags
 #[tauri::command]
 pub async fn get_all_tags() -> CommandResult<Vec<VaultTag>> {
-    match operations::get_all_tags() {
+    match VaultManager::list_tags() {
         Ok(tags) => CommandResult::ok(tags),
         Err(e) => {
             tracing::error!("Failed to get tags: {}", e);
@@ -384,7 +376,7 @@ pub async fn get_all_tags() -> CommandResult<Vec<VaultTag>> {
 pub async fn delete_tag(tag_id: String) -> CommandResult<bool> {
     tracing::info!("Deleting tag: {}", tag_id);
 
-    match operations::delete_tag(&tag_id) {
+    match VaultManager::delete_tag(&tag_id) {
         Ok(_) => {
             tracing::info!("Tag deleted");
             CommandResult::ok(true)
@@ -403,8 +395,8 @@ pub async fn delete_tag(tag_id: String) -> CommandResult<bool> {
 /// Search entries using full-text search (summaries only)
 #[tauri::command]
 pub async fn search_entries(query: String) -> CommandResult<Vec<EntrySummary>> {
-    match operations::search_entries(&query) {
-        Ok(entries) => CommandResult::ok(entries.into_iter().map(|e| e.to_summary()).collect()),
+    match VaultManager::search(&query) {
+        Ok(entries) => CommandResult::ok(entries),
         Err(e) => {
             tracing::error!("Failed to search entries: {}", e);
             CommandResult::err(e)
@@ -419,7 +411,7 @@ pub async fn search_entries(query: String) -> CommandResult<Vec<EntrySummary>> {
 /// Generate a password
 #[tauri::command]
 pub async fn generate_password(params: PasswordGenerationParams) -> CommandResult<String> {
-    match operations::generate_password(&params) {
+    match VaultManager::generate_password(&params) {
         Ok(password) => CommandResult::ok(password),
         Err(e) => CommandResult::err(e),
     }
@@ -428,7 +420,7 @@ pub async fn generate_password(params: PasswordGenerationParams) -> CommandResul
 /// Generate a Diceware passphrase
 #[tauri::command]
 pub async fn generate_passphrase(word_count: usize) -> CommandResult<String> {
-    match operations::generate_passphrase(word_count) {
+    match VaultManager::generate_passphrase(word_count) {
         Ok(passphrase) => CommandResult::ok(passphrase),
         Err(e) => CommandResult::err(e),
     }
@@ -441,8 +433,8 @@ pub async fn generate_passphrase(word_count: usize) -> CommandResult<String> {
 /// Reveal password briefly for display (caller must not persist)
 #[tauri::command]
 pub async fn reveal_password(entry_id: String) -> CommandResult<String> {
-    match operations::get_entry(&entry_id) {
-        Ok(entry) => CommandResult::ok(entry.password),
+    match VaultManager::get_password(&entry_id) {
+        Ok(password) => CommandResult::ok(password),
         Err(e) => CommandResult::err(e),
     }
 }
@@ -450,7 +442,7 @@ pub async fn reveal_password(entry_id: String) -> CommandResult<String> {
 /// Copy password to clipboard with auto-clear
 #[tauri::command]
 pub async fn copy_password(entry_id: String) -> CommandResult<bool> {
-    match operations::get_entry(&entry_id) {
+    match VaultManager::get_entry_secret(&entry_id) {
         Ok(entry) => match clipboard::copy_secret(&entry.password) {
             Ok(()) => CommandResult::ok(true),
             Err(e) => CommandResult::err(e),
@@ -462,7 +454,7 @@ pub async fn copy_password(entry_id: String) -> CommandResult<bool> {
 /// Copy an arbitrary non-secret field via secure clipboard (username, url, notes…)
 #[tauri::command]
 pub async fn copy_entry_field(entry_id: String, field: String) -> CommandResult<bool> {
-    let entry = match operations::get_entry(&entry_id) {
+    let entry = match VaultManager::get_entry_secret(&entry_id) {
         Ok(e) => e,
         Err(e) => return CommandResult::err(e),
     };
@@ -490,16 +482,8 @@ pub async fn copy_entry_field(entry_id: String, field: String) -> CommandResult<
 /// Generate TOTP for an entry (secret stays in Rust)
 #[tauri::command]
 pub async fn generate_totp_for_entry(entry_id: String) -> CommandResult<TOTPResult> {
-    match operations::get_entry(&entry_id) {
-        Ok(entry) => {
-            let Some(secret) = entry.totp_secret.filter(|s| !s.is_empty()) else {
-                return CommandResult::err("Entry has no TOTP secret".to_string());
-            };
-            match operations::generate_totp(&secret) {
-                Ok(result) => CommandResult::ok(result),
-                Err(e) => CommandResult::err(e),
-            }
-        }
+    match VaultManager::generate_totp(&entry_id) {
+        Ok(result) => CommandResult::ok(result),
         Err(e) => CommandResult::err(e),
     }
 }
@@ -507,19 +491,11 @@ pub async fn generate_totp_for_entry(entry_id: String) -> CommandResult<TOTPResu
 /// Copy current TOTP code to clipboard with auto-clear
 #[tauri::command]
 pub async fn copy_totp(entry_id: String) -> CommandResult<bool> {
-    match operations::get_entry(&entry_id) {
-        Ok(entry) => {
-            let Some(secret) = entry.totp_secret.filter(|s| !s.is_empty()) else {
-                return CommandResult::err("Entry has no TOTP secret".to_string());
-            };
-            match operations::generate_totp(&secret) {
-                Ok(result) => match clipboard::copy_secret(&result.code) {
-                    Ok(()) => CommandResult::ok(true),
-                    Err(e) => CommandResult::err(e),
-                },
-                Err(e) => CommandResult::err(e),
-            }
-        }
+    match VaultManager::generate_totp(&entry_id) {
+        Ok(result) => match clipboard::copy_secret(&result.code) {
+            Ok(()) => CommandResult::ok(true),
+            Err(e) => CommandResult::err(e),
+        },
         Err(e) => CommandResult::err(e),
     }
 }
@@ -545,12 +521,8 @@ pub async fn copy_to_clipboard(text: String) -> CommandResult<bool> {
 pub async fn import_dashlane_csv(path: String) -> CommandResult<ImportSummary> {
     tracing::info!("Importing Dashlane CSV");
 
-    match import::import_dashlane_csv(std::path::Path::new(&path)) {
+    match VaultManager::import(|conn| import::import_dashlane_csv(conn, std::path::Path::new(&path))) {
         Ok(summary) => {
-            // Persist imported data immediately
-            if let Err(e) = VaultManager::save_vault() {
-                tracing::warn!("Auto-save after import failed: {}", e);
-            }
             tracing::info!(
                 "Dashlane import done: {} imported, {} skipped",
                 summary.imported,
@@ -564,3 +536,4 @@ pub async fn import_dashlane_csv(path: String) -> CommandResult<ImportSummary> {
         }
     }
 }
+

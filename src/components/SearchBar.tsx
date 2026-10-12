@@ -1,24 +1,31 @@
+import { useRef } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../stores/app';
 import * as api from '../api';
+import { requestStillCurrent, startRequest } from '../requestGuard';
 import './SearchBar.css';
 
 export default function SearchBar() {
   const { t } = useTranslation();
   const { searchQuery, setSearchQuery, setSearchResults, darkMode } = useAppStore();
+  const requestGate = useRef({ id: 0 });
 
-  const handleSearch = async (query: string) => {
+  const handleSearch = (query: string) => {
     setSearchQuery(query);
-    if (query.trim().length >= 2) {
-      try {
-        const results = await api.searchEntries(query.trim());
-        setSearchResults(results);
-      } catch {
+    const current = startRequest(requestGate.current);
+    window.setTimeout(async () => {
+      if (!requestStillCurrent(current, requestGate.current)) return;
+      if (query.trim().length >= 2) {
+        try {
+          const results = await api.searchEntries(query.trim());
+          if (requestStillCurrent(current, requestGate.current)) setSearchResults(results);
+        } catch {
+          if (requestStillCurrent(current, requestGate.current)) setSearchResults(null);
+        }
+      } else {
         setSearchResults(null);
       }
-    } else {
-      setSearchResults(null);
-    }
+    }, 200);
   };
 
   return (

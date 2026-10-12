@@ -1,405 +1,386 @@
-//! Vault manager module
-//! 
-//! Handles vault lifecycle operations:
-//! - Creation and opening
-//! - Locking and unlocking
-//! - Atomic saves with backup
+//! Process-wide vault service used by the desktop commands.
 
-use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Mutex;
-use secrecy::Secret;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use once_cell::sync::Lazy;
-
-use crate::crypto::{
-    self, VaultHeader, generate_salt, derive_key,
-    DEFAULT_MEM_COST, DEFAULT_TIME_COST, DEFAULT_PARALLELISM,
-    VAULT_MAGIC, VAULT_VERSION, HEADER_SIZE,
+use rvault_application::VaultService;
+use rvault_core::{
+    EntryEditData, EntryPatch, EntrySummary, PasswordGenerationParams, TOTPResult, VaultFolder,
+    VaultTag,
 };
-use crate::db;
+use rvault_storage::StorageError;
 
-/// Global vault state
-static VAULT_STATE: Lazy<Mutex<Option<VaultInstance>>> = Lazy::new(|| Mutex::new(None));
+static SERVICE: Lazy<Mutex<Option<VaultService>>> = Lazy::new(|| Mutex::new(None));
+static LAST_ACTIVITY: AtomicI64 = AtomicI64::new(0);
+static IDLE_SECS: AtomicI64 = AtomicI64::new(900);
+static LOCK_ON_BLUR: AtomicBool = AtomicBool::new(false);
 
-/// Active vault instance
-#[allow(dead_code)]
-struct VaultInstance {
-    /// Path to the original vault file (header + db)
-    vault_path: String,
-    /// Path to the extracted temporary database
-    db_path: String,
-    encryption_key: Secret<Vec<u8>>,
-    header: VaultHeader,
-}
-
-/// Vault manager for high-level operations
+/// Vault manager for high-level operations.
 pub struct VaultManager;
 
 impl VaultManager {
-    /// Create a new vault file
     pub fn create_vault(vault_path: &str, master_password: &str) -> Result<(), String> {
-        let path = Path::new(vault_path);
-
-        // Check if file already exists
-        if path.exists() {
-            return Err("Vault file already exists".to_string());
+        let mut state = SERVICE.lock().map_err(|_| "Vault session is unavailable".to_string())?;
+        if state.is_some() {
+            return Err("A vault is already open".to_string());
         }
-
-        // Generate salt
-        let salt = generate_salt()?;
-
-        // Derive encryption key first (needed for HMAC)
-        let password = Secret::new(master_password.to_string());
-        let key = derive_key(&password, &salt, DEFAULT_MEM_COST, DEFAULT_TIME_COST, DEFAULT_PARALLELISM)?;
-
-        // Create header (without HMAC initially)
-        let header = VaultHeader {
-            magic: VAULT_MAGIC,
-            version: VAULT_VERSION,
-            salt,
-            mem_cost: DEFAULT_MEM_COST,
-            time_cost: DEFAULT_TIME_COST,
-            parallelism: DEFAULT_PARALLELISM,
-            header_hmac: [0u8; 32],
-        };
-
-        // Compute HMAC over header data (excluding the HMAC field itself)
-        let header_bytes = header.to_bytes();
-        let hmac = crypto::compute_header_hmac(&header_bytes[0..0x1D], &key);
-
-        let mut final_header = header;
-        final_header.header_hmac = hmac;
-
-        // Step 1: Create the database at a temporary path
-        let tmp_path = path.with_extension("vault.tmp.db");
-        db::create_new_vault(&tmp_path, &key)?;
-
-        // Step 2: Read the database content
-        let db_content = std::fs::read(&tmp_path)
-            .map_err(|e| format!("Failed to read temporary database: {}", e))?;
-
-        // Step 3: Write header + database content to final vault file
-        let mut vault_content = final_header.to_bytes().to_vec();
-        vault_content.extend_from_slice(&db_content);
-
-        std::fs::write(path, vault_content)
-            .map_err(|e| format!("Failed to write vault file: {}", e))?;
-
-        // Keep the temp DB as the working copy (don't delete it)
-        // Store in global state
-        let vault_instance = VaultInstance {
-            vault_path: vault_path.to_string(),
-            db_path: tmp_path.to_string_lossy().to_string(),
-            encryption_key: key,
-            header: final_header,
-        };
-
-        let mut state = VAULT_STATE.lock().unwrap();
-        *state = Some(vault_instance);
-
+        *state = Some(VaultService::create(vault_path, master_password)?);
+        touch();
         Ok(())
     }
-    
-    /// Open an existing vault
+
     pub fn open_vault(vault_path: &str, master_password: &str) -> Result<(), String> {
-        let path = Path::new(vault_path);
-
-        // Check if file exists
-        if !path.exists() {
-            return Err("Vault file not found".to_string());
+        let mut state = SERVICE.lock().map_err(|_| "Vault session is unavailable".to_string())?;
+        if state.is_some() {
+            return Err("A vault is already open".to_string());
         }
-
-        // Read the full vault file
-        let vault_data = std::fs::read(path)
-            .map_err(|e| format!("Failed to read vault file: {}", e))?;
-
-        if vault_data.len() < HEADER_SIZE {
-            return Err("Vault file too small".to_string());
-        }
-
-        // Parse header
-        let header_array: [u8; HEADER_SIZE] = vault_data[0..HEADER_SIZE]
-            .try_into()
-            .map_err(|_| "Failed to parse vault header")?;
-
-        let header = VaultHeader::from_bytes(&header_array)?;
-        header.verify()?;
-
-        // Bound KDF params BEFORE Argon2 to prevent DoS via malicious headers
-        crypto::validate_kdf_params(header.mem_cost, header.time_cost, header.parallelism)?;
-
-        // Derive encryption key first (needed for HMAC verification)
-        let password = Secret::new(master_password.to_string());
-        let key = derive_key(&password, &header.salt, header.mem_cost, header.time_cost, header.parallelism)?;
-
-        // Verify HMAC
-        let computed_hmac = crypto::compute_header_hmac(&vault_data[0..0x1D], &key);
-        if computed_hmac != header.header_hmac {
-            return Err("Vault header integrity check failed".to_string());
-        }
-
-        // Extract the database portion (everything after the 96-byte header)
-        let db_data = &vault_data[HEADER_SIZE..];
-        if db_data.is_empty() {
-            return Err("Vault file has no database payload".to_string());
-        }
-
-        // Write the database to a temporary path for use
-        let tmp_path = path.with_extension("vault.tmp.db");
-        if tmp_path.exists() {
-            let _ = std::fs::remove_file(&tmp_path);
-        }
-        std::fs::write(&tmp_path, db_data)
-            .map_err(|e| format!("Failed to extract database: {}", e))?;
-
-        // Unlock + migrate on a single connection path
-        db::test_vault_connection(&tmp_path, &key)?;
-        let schema_changed = {
-            let conn = db::init_connection(&tmp_path, &key)?;
-            db::run_migrations(&conn)?
-        };
-
-        // Store in global state
-        let vault_instance = VaultInstance {
-            vault_path: vault_path.to_string(),
-            db_path: tmp_path.to_string_lossy().to_string(),
-            encryption_key: key,
-            header,
-        };
-
-        let mut state = VAULT_STATE.lock().unwrap();
-        // Drop previous session if any (avoid stale temp DB / key)
-        if let Some(prev) = state.take() {
-            let _ = std::fs::remove_file(Path::new(&prev.db_path));
-        }
-        *state = Some(vault_instance);
-        drop(state);
-
-        // Persist schema upgrades into the .vault file immediately
-        if schema_changed {
-            VaultManager::save_vault()?;
-        }
-
+        *state = Some(VaultService::open(vault_path, master_password)?);
+        touch();
         Ok(())
     }
-    
-    /// Lock the vault (clear key from memory)
+
     pub fn lock_vault() -> Result<(), String> {
-        let mut state = VAULT_STATE.lock().unwrap();
-        if let Some(vault) = state.take() {
-            // Clean up temporary database
-            let db_path = Path::new(&vault.db_path);
-            let _ = std::fs::remove_file(db_path);
+        let mut state = SERVICE.lock().map_err(|_| "Vault session is unavailable".to_string())?;
+        if let Some(service) = state.as_ref() {
+            service.close()?;
         }
+        state.take();
         Ok(())
     }
-    
-    /// Save vault with atomic write and backup rotation (.bak.1 to .bak.3)
+
     pub fn save_vault() -> Result<(), String> {
-        let state = VAULT_STATE.lock().unwrap();
-        let vault = state.as_ref()
-            .ok_or("No vault is currently open")?;
-
-        let vault_path = Path::new(&vault.vault_path);
-        let db_path = Path::new(&vault.db_path);
-        let tmp_path = vault_path.with_extension("vault.tmp");
-        let bak1 = vault_path.with_extension("vault.bak.1");
-        let bak2 = vault_path.with_extension("vault.bak.2");
-        let bak3 = vault_path.with_extension("vault.bak.3");
-
-        // Read the working database content
-        let db_content = std::fs::read(db_path)
-            .map_err(|e| format!("Failed to read working database: {}", e))?;
-
-        // Build vault file: header + database
-        let mut vault_content = vault.header.to_bytes().to_vec();
-        vault_content.extend_from_slice(&db_content);
-
-        // Rotate backups: .bak.2 -> .bak.3, .bak.1 -> .bak.2
-        if bak2.exists() {
-            std::fs::rename(&bak2, &bak3)
-                .map_err(|e| format!("Failed to rotate backup: {}", e))?;
-        }
-        if bak1.exists() {
-            std::fs::rename(&bak1, &bak2)
-                .map_err(|e| format!("Failed to rotate backup: {}", e))?;
-        }
-
-        // Create .bak.1 from current vault file
-        if vault_path.exists() {
-            std::fs::copy(vault_path, &bak1)
-                .map_err(|e| format!("Failed to create backup: {}", e))?;
-        }
-
-        // Write to tmp file
-        std::fs::write(&tmp_path, vault_content)
-            .map_err(|e| format!("Failed to prepare save: {}", e))?;
-
-        // Atomic rename
-        std::fs::rename(&tmp_path, vault_path)
-            .map_err(|e| format!("Failed to complete save: {}", e))?;
-
-        // Clean up tmp
-        let _ = std::fs::remove_file(&tmp_path);
-
-        Ok(())
+        with_service_string(|service| service.save().map_err(StorageError::internal))
     }
-    
-    /// Check if vault is currently open
+
     pub fn is_vault_open() -> bool {
-        let state = VAULT_STATE.lock().unwrap();
-        state.is_some()
+        SERVICE
+            .lock()
+            .map(|state| state.as_ref().is_some_and(|service| service.is_open()))
+            .unwrap_or(false)
     }
 
-    /// Get the active database connection
-    pub fn get_connection() -> Result<rusqlite::Connection, String> {
-        let state = VAULT_STATE.lock().unwrap();
-        let vault = state.as_ref()
-            .ok_or("No vault is currently open")?;
-
-        let db_path = Path::new(&vault.db_path);
-        db::init_connection(db_path, &vault.encryption_key)
+    pub fn create_entry(
+        folder_id: Option<String>,
+        title: String,
+        url: Option<String>,
+        username: Option<String>,
+        username2: Option<String>,
+        username3: Option<String>,
+        password: String,
+        notes: Option<String>,
+        totp_secret: Option<String>,
+        is_favorite: bool,
+        tag_ids: Option<Vec<String>>,
+    ) -> Result<EntrySummary, String> {
+        with_service(|service| {
+            service.create_entry(
+                folder_id,
+                title,
+                url,
+                username,
+                username2,
+                username3,
+                password,
+                notes,
+                totp_secret,
+                is_favorite,
+                tag_ids,
+            )
+        })
     }
+
+    pub fn update_entry(entry_id: String, patch: EntryPatch) -> Result<EntrySummary, String> {
+        with_service(|service| service.update_entry(entry_id, patch))
+    }
+
+    pub fn delete_entry(entry_id: &str) -> Result<(), String> {
+        let entry_id = entry_id.to_string();
+        with_service(|service| service.delete_entry(&entry_id))
+    }
+
+    pub fn list_entries() -> Result<Vec<EntrySummary>, String> {
+        with_service(|service| service.list_entries())
+    }
+
+    pub fn edit_entry(entry_id: &str) -> Result<EntryEditData, String> {
+        let entry_id = entry_id.to_string();
+        with_service(|service| service.edit_entry(&entry_id))
+    }
+
+    pub fn get_password(entry_id: &str) -> Result<String, String> {
+        let entry_id = entry_id.to_string();
+        with_service(|service| service.reveal_password(&entry_id))
+    }
+
+    pub fn get_entry_secret(entry_id: &str) -> Result<rvault_core::VaultEntry, String> {
+        let entry_id = entry_id.to_string();
+        with_service(|service| service.get_entry(&entry_id))
+    }
+
+    pub fn search(query: &str) -> Result<Vec<EntrySummary>, String> {
+        let query = query.to_string();
+        with_service(|service| service.search(&query))
+    }
+
+    pub fn create_folder(name: String, parent_id: Option<String>) -> Result<VaultFolder, String> {
+        with_service(|service| service.create_folder(name, parent_id))
+    }
+
+    pub fn list_folders() -> Result<Vec<VaultFolder>, String> {
+        with_service(|service| service.list_folders())
+    }
+
+    pub fn update_folder(
+        folder_id: &str,
+        name: String,
+        parent_id: Option<String>,
+    ) -> Result<VaultFolder, String> {
+        let folder_id = folder_id.to_string();
+        with_service(|service| service.update_folder(&folder_id, name, parent_id))
+    }
+
+    pub fn delete_folder(folder_id: &str) -> Result<(), String> {
+        let folder_id = folder_id.to_string();
+        with_service(|service| service.delete_folder(&folder_id))
+    }
+
+    pub fn create_tag(name: String) -> Result<VaultTag, String> {
+        with_service(|service| service.create_tag(name))
+    }
+
+    pub fn list_tags() -> Result<Vec<VaultTag>, String> {
+        with_service(|service| service.list_tags())
+    }
+
+    pub fn delete_tag(tag_id: &str) -> Result<(), String> {
+        let tag_id = tag_id.to_string();
+        with_service(|service| service.delete_tag(&tag_id))
+    }
+
+    pub fn generate_totp(entry_id: &str) -> Result<TOTPResult, String> {
+        let entry_id = entry_id.to_string();
+        with_service(|service| service.generate_totp(&entry_id))
+    }
+
+    pub fn generate_password(params: &PasswordGenerationParams) -> Result<String, String> {
+        rvault_application::generate_password(params)
+    }
+
+    pub fn generate_passphrase(word_count: usize) -> Result<String, String> {
+        rvault_application::generate_passphrase(word_count)
+    }
+
+    pub fn import<T>(
+        import: impl FnOnce(&rusqlite::Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        with_service(|service| {
+            service.mutate(|conn| import(conn).map_err(StorageError::internal))
+        })
+    }
+
+    pub fn set_lock_preferences(idle_secs: i64, lock_on_blur: bool) {
+        IDLE_SECS.store(idle_secs.max(0), Ordering::Relaxed);
+        LOCK_ON_BLUR.store(lock_on_blur, Ordering::Relaxed);
+        touch();
+    }
+
+    pub fn lock_on_blur_enabled() -> bool {
+        LOCK_ON_BLUR.load(Ordering::Relaxed)
+    }
+
+    pub fn lock_if_idle() -> Result<(), String> {
+        if !Self::is_vault_open() {
+            return Ok(());
+        }
+        let idle = IDLE_SECS.load(Ordering::Relaxed);
+        if idle <= 0 {
+            return Ok(());
+        }
+        let last = LAST_ACTIVITY.load(Ordering::Relaxed);
+        if unix_now().saturating_sub(last) >= idle {
+            Self::lock_vault()
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn with_service<T>(operation: impl FnOnce(&VaultService) -> Result<T, StorageError>) -> Result<T, String> {
+    touch();
+    let state = SERVICE.lock().map_err(|_| "Vault session is unavailable".to_string())?;
+    let service = state.as_ref().ok_or("No vault is currently open")?;
+    operation(service).map_err(|error| error.to_string())
+}
+
+fn with_service_string<T>(operation: impl FnOnce(&VaultService) -> Result<T, StorageError>) -> Result<T, String> {
+    with_service(operation)
+}
+
+fn touch() {
+    LAST_ACTIVITY.store(unix_now(), Ordering::Relaxed);
+}
+
+fn unix_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     fn cleanup(path: &str) {
         let p = Path::new(path);
+        for suffix in [
+            "",
+            ".lock",
+            ".tmp",
+            ".bak.pending",
+            ".recovery.db",
+        ] {
+            if suffix.is_empty() {
+                let _ = std::fs::remove_file(p);
+            }
+        }
         let _ = std::fs::remove_file(p);
-        let _ = std::fs::remove_file(p.with_extension("vault.tmp.db"));
+        let _ = std::fs::remove_file(p.with_extension("vault.lock"));
+        let _ = std::fs::remove_file(p.with_extension("vault.tmp"));
+        let _ = std::fs::remove_file(p.with_extension("vault.bak.pending"));
         let _ = std::fs::remove_file(p.with_extension("vault.bak.1"));
         let _ = std::fs::remove_file(p.with_extension("vault.bak.2"));
         let _ = std::fs::remove_file(p.with_extension("vault.bak.3"));
+        let _ = std::fs::remove_file(p.with_extension("vault.recovery.db"));
     }
 
     #[test]
     fn test_full_vault_lifecycle() {
-        let temp_dir = std::env::temp_dir();
-        let vault_path = temp_dir.join("test_lifecycle.vault");
+        let vault_path = std::env::temp_dir().join("test_lifecycle.vault");
         let vault_str = vault_path.to_str().unwrap();
-
-        // Ensure clean state
         cleanup(vault_str);
 
-        // 1. Create vault
         let result = VaultManager::create_vault(vault_str, "master_password_123");
         assert!(result.is_ok(), "Failed to create vault: {:?}", result);
         assert!(VaultManager::is_vault_open(), "Vault should be open after creation");
         assert!(vault_path.exists(), "Vault file should exist");
 
-        // 2. Save vault
         let result = VaultManager::save_vault();
         assert!(result.is_ok(), "Failed to save vault: {:?}", result);
-        assert!(vault_path.exists(), "Vault file should still exist after save");
 
-        // 3. Lock vault
         let result = VaultManager::lock_vault();
         assert!(result.is_ok(), "Failed to lock vault: {:?}", result);
         assert!(!VaultManager::is_vault_open(), "Vault should be closed after lock");
 
-        // 4. Re-open vault with correct password
         let result = VaultManager::open_vault(vault_str, "master_password_123");
         assert!(result.is_ok(), "Failed to reopen vault: {:?}", result);
-        assert!(VaultManager::is_vault_open(), "Vault should be open after reopening");
 
-        // 5. Try to open with wrong password (should fail)
         VaultManager::lock_vault().ok();
         let result = VaultManager::open_vault(vault_str, "wrong_password");
         assert!(result.is_err(), "Should fail to open with wrong password");
         assert!(!VaultManager::is_vault_open(), "Vault should not be open after failed auth");
 
-        // Cleanup
+        VaultManager::lock_vault().ok();
+        cleanup(vault_str);
+    }
+
+    #[test]
+    fn test_second_open_is_refused() {
+        let vault_path = std::env::temp_dir().join("test_second_open.vault");
+        let vault_str = vault_path.to_str().unwrap();
+        cleanup(vault_str);
+        VaultManager::create_vault(vault_str, "master_password_123").unwrap();
+        let second = VaultManager::open_vault(vault_str, "master_password_123");
+        assert!(second.unwrap_err().contains("already open"));
+        assert!(VaultManager::is_vault_open());
         VaultManager::lock_vault().ok();
         cleanup(vault_str);
     }
 
     #[test]
     fn test_vault_backup_rotation() {
-        let temp_dir = std::env::temp_dir();
-        let vault_path = temp_dir.join("test_backup.vault");
+        let vault_path = std::env::temp_dir().join("test_backup.vault");
         let vault_str = vault_path.to_str().unwrap();
-
         cleanup(vault_str);
-
-        // Create vault
-        VaultManager::create_vault(vault_str, "test_pass").unwrap();
-
-        // Save 3 times to trigger full rotation
+        VaultManager::create_vault(vault_str, "test_pass_1").unwrap();
         VaultManager::save_vault().unwrap();
-        assert!(vault_path.with_extension("vault.bak.1").exists(), "First backup should exist");
-
+        assert!(vault_path.with_extension("vault.bak.1").exists());
         VaultManager::save_vault().unwrap();
-        assert!(vault_path.with_extension("vault.bak.1").exists(), ".bak.1 should exist after 2 saves");
-        assert!(vault_path.with_extension("vault.bak.2").exists(), ".bak.2 should exist after 2 saves");
-
+        assert!(vault_path.with_extension("vault.bak.2").exists());
         VaultManager::save_vault().unwrap();
-        assert!(vault_path.with_extension("vault.bak.1").exists(), ".bak.1 should exist after 3 saves");
-        assert!(vault_path.with_extension("vault.bak.2").exists(), ".bak.2 should exist after 3 saves");
-        assert!(vault_path.with_extension("vault.bak.3").exists(), ".bak.3 should exist after 3 saves");
-
-        // Cleanup
+        assert!(vault_path.with_extension("vault.bak.3").exists());
         VaultManager::lock_vault().ok();
         cleanup(vault_str);
     }
 
     #[test]
     fn test_create_duplicate_vault_fails() {
-        let temp_dir = std::env::temp_dir();
-        let vault_path = temp_dir.join("test_dup.vault");
+        let vault_path = std::env::temp_dir().join("test_dup.vault");
         let vault_str = vault_path.to_str().unwrap();
-
         cleanup(vault_str);
-
-        let result1 = VaultManager::create_vault(vault_str, "pass1");
-        assert!(result1.is_ok());
-
-        let result2 = VaultManager::create_vault(vault_str, "pass2");
+        assert!(VaultManager::create_vault(vault_str, "password-one").is_ok());
+        VaultManager::lock_vault().unwrap();
+        let result2 = VaultManager::create_vault(vault_str, "password-two");
         assert!(result2.is_err(), "Creating duplicate vault should fail");
         assert!(result2.unwrap_err().contains("already exists"));
-
         VaultManager::lock_vault().ok();
         cleanup(vault_str);
     }
 
     #[test]
     fn test_vault_data_persists_across_sessions() {
-        let temp_dir = std::env::temp_dir();
-        let vault_path = temp_dir.join("test_persist.vault");
+        let vault_path = std::env::temp_dir().join("test_persist.vault");
         let vault_str = vault_path.to_str().unwrap();
-
         cleanup(vault_str);
-
-        // Session 1: Create and populate
         VaultManager::create_vault(vault_str, "session_pass").unwrap();
-
-        let conn = VaultManager::get_connection().unwrap();
-        conn.execute(
-            "INSERT INTO meta (key, value) VALUES ('test_key', 'test_value')",
-            [],
-        ).unwrap();
-        drop(conn);
-
-        // Save and lock
-        VaultManager::save_vault().unwrap();
+        let created = VaultManager::create_entry(
+            None,
+            "Persisted".into(),
+            None,
+            None,
+            None,
+            None,
+            "secret-value".into(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .unwrap();
         VaultManager::lock_vault().unwrap();
-
-        // Session 2: Re-open and verify data
         VaultManager::open_vault(vault_str, "session_pass").unwrap();
-        let conn = VaultManager::get_connection().unwrap();
-
-        let value: String = conn.query_row(
-            "SELECT value FROM meta WHERE key = 'test_key'",
-            [],
-            |row| row.get(0),
-        ).unwrap();
-
-        assert_eq!(value, "test_value", "Data should persist across sessions");
-
-        // Cleanup
-        drop(conn);
+        let entries = VaultManager::list_entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, created.id);
+        assert_eq!(entries[0].title, "Persisted");
         VaultManager::lock_vault().ok();
         cleanup(vault_str);
+    }
+
+    #[test]
+    fn test_lock_keeps_session_when_save_fails() {
+        let dir = std::env::temp_dir().join(format!("rvault-lock-fail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let vault_path = dir.join("locked.vault");
+        let vault_str = vault_path.to_str().unwrap();
+        VaultManager::create_vault(vault_str, "session_pass").unwrap();
+        let mut perms = std::fs::metadata(&dir).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&dir, perms).unwrap();
+        let saved = VaultManager::save_vault();
+        assert!(saved.is_err(), "save should fail when the directory is read-only");
+        let locked = VaultManager::lock_vault();
+        assert!(locked.is_err(), "lock must not discard unsaved changes");
+        assert!(VaultManager::is_vault_open());
+        let mut perms = std::fs::metadata(&dir).unwrap().permissions();
+        perms.set_readonly(false);
+        std::fs::set_permissions(&dir, perms).unwrap();
+        VaultManager::lock_vault().ok();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,8 +1,8 @@
 # RVaultPass
 
-> A secure, local, zero-knowledge password manager for your desktop.
+> A local password manager. The desktop vault is encrypted on disk. A local HTTP service, when unlocked, can read that vault.
 
-**RVaultPass** stores all your passwords, notes, and TOTP tokens in a single encrypted `.vault` file — no server, no cloud, no telemetry. Your data never leaves your machine.
+**RVaultPass** stores passwords, notes, and TOTP tokens in an encrypted `.vault` file. The master password unlocks the file on the machine that holds it.
 
 ---
 
@@ -13,8 +13,8 @@
 - **Argon2id** key derivation (64 MiB memory, 3 iterations)
 - **SQLCipher** (AES-256-CBC) encrypted SQLite database
 - **Keyed HMAC-SHA256** header integrity verification
-- **Zero-knowledge**: no sensitive data ever exposed to the frontend
-- **Secure memory**: `secrecy::Secret<T>` + `zeroize` for all key material
+- **Secrets in the interface**: the desktop and the browser extension receive a password only when the user asks to reveal, copy, or fill it. They do not hold the SQLCipher key. The unlocked local HTTP service can read the vault; it is not a zero-knowledge server.
+- **Memory hygiene**: `secrecy` and `zeroize` cover keys and clipboard buffers. This reduces leftover copies; it does not promise that every runtime or OS allocation is wiped.
 
 ### 📂 Vault Management
 
@@ -208,12 +208,16 @@ cargo test -- --test-threads=1
 
 ---
 
+## Documentation
+
+Le format du coffre et le service HTTP sont décrits dans [`docs/README.md`](docs/README.md).
+
 ## Out of Scope (V1)
 
-- ❌ Cloud sync / multi-device
+- ❌ Multi-user cloud sharing
 - ❌ Key file or hardware token (YubiKey)
 - ❌ Change history per entry
-- ❌ Browser autofill / OS integration
+- ❌ OS credential integration
 - ❌ KeePass `.kdbx` compatibility
 - ❌ Encrypted sharing between users
 

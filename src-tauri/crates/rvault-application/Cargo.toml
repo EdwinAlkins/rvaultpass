@@ -1,0 +1,11 @@
+[package]
+name = "rvault-application"
+version = "0.1.0"
+description = "Vault use cases shared by the desktop and the HTTP service"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher"] }
+rvault-core = { path = "../rvault-core" }
+rvault-storage = { path = "../rvault-storage" }
